@@ -1,0 +1,15 @@
+{
+  "rows": 101766,
+  "features_after_drop": 44,
+  "positive_rate": 0.11159915885462728,
+  "train_rows": 81412,
+  "test_rows": 20354,
+  "roc_auc": 0.6463515888731964,
+  "average_precision": 0.20099763239276636,
+  "brier_score": 0.22877515709557195,
+  "best_threshold": 0.5,
+  "best_threshold_precision": 0.163659628918746,
+  "best_threshold_recall": 0.563188022897402,
+  "best_threshold_f1": 0.25361887765219115,
+  "flagged_rate_at_best_threshold": 0.38395401395303136
+}
