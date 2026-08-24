@@ -1,0 +1,83 @@
+{
+  "xgboost": {
+    "candidate": 1,
+    "params": {
+      "max_depth": 3,
+      "learning_rate": 0.03,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "reg_lambda": 5.0,
+      "gamma": 0.0,
+      "scale_pos_weight": 1.0
+    },
+    "temperature": 0.8879004120826721
+  },
+  "tabm": {
+    "architecture": "tabm-mini",
+    "k": 16,
+    "n_blocks": 3,
+    "d_block": 256,
+    "dropout": 0.1,
+    "temperature": 0.9326785206794739,
+    "category_cardinalities": [
+      7,
+      4,
+      11,
+      9,
+      22,
+      15,
+      674,
+      681,
+      715,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      3,
+      5,
+      5,
+      3,
+      5,
+      5,
+      5,
+      4,
+      3,
+      4,
+      2,
+      2,
+      5,
+      5,
+      3,
+      2,
+      2,
+      2,
+      3,
+      3,
+      20,
+      641,
+      21,
+      648,
+      21,
+      683,
+      21,
+      22
+    ],
+    "numeric_features": 29
+  },
+  "stack": {
+    "catboost_weight": 0.30000000000000004,
+    "xgboost_weight": 0.49999999999999994,
+    "tabm_weight": 0.2,
+    "temperature": 0.9929085969924927
+  },
+  "patient_overlap_counts": {
+    "train_validation": 0,
+    "train_test": 0,
+    "validation_test": 0
+  },
+  "test_used_for_selection": false
+}

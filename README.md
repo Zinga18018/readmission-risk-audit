@@ -220,6 +220,29 @@ a 64-dimensional bottleneck plus histogram gradient boosting and reached only
 test ROC-AUC `0.62822` and PR-AUC `0.13398`. The autoencoder removed predictive
 signal rather than useful fluff, so it is not used in the final model.
 
+### Final rescue pass: XGBoost, TabM, and stacking
+
+XGBoost was added because a recent study on this same public cohort reported it
+as the strongest of logistic regression, random forest, XGBoost, and DNN
+baselines. TabM was added as a modern parameter-efficient ensemble of MLPs. Six
+XGBoost candidates and one early-stopped TabM-mini candidate were selected on
+the later validation cohort; test remained untouched until their weights were
+frozen.
+
+| Model | Validation PR-AUC | Test ROC-AUC | Test PR-AUC | Test F1 | Test Brier |
+|---|---:|---:|---:|---:|---:|
+| Existing CatBoost ensemble | 0.17076 | **0.66124** | **0.17465** | **0.21872** | **0.07731** |
+| XGBoost | 0.17292 | 0.63771 | 0.15605 | 0.19641 | 0.07832 |
+| TabM-mini | 0.16402 | 0.64018 | 0.15498 | 0.20031 | 0.07858 |
+| CatBoost + XGBoost + TabM | **0.17628** | 0.65118 | 0.16529 | 0.20082 | 0.07779 |
+
+The rescue models improved validation ranking but did not transfer to the later
+encounter-order test cohort. Retuning against test would be leakage. The
+existing CatBoost therefore remains primary. Further material improvement now
+requires richer predictors—such as real dates, laboratory values, vital signs,
+comorbidity detail, hospital/provider context, and behavioral or social-risk
+variables—not another larger architecture over the same inputs.
+
 ## Verified local results
 
 The checked-in values below are refreshed only after a successful full training
@@ -284,6 +307,7 @@ python -m venv $ReadmissionVenv
 & "$ReadmissionVenv\Scripts\python.exe" scripts\build_readmission_audit.py
 & "$ReadmissionVenv\Scripts\python.exe" -m scripts.run_improvement_experiments
 & "$ReadmissionVenv\Scripts\python.exe" -m scripts.finalize_catboost_improvement
+& "$ReadmissionVenv\Scripts\python.exe" -m scripts.run_xgb_tabm_stack
 & "$ReadmissionVenv\Scripts\python.exe" -m streamlit run app.py
 ```
 
@@ -318,6 +342,11 @@ artifacts/
   catboost_later_gated_primary.cbm
   catboost_later_gated_secondary.cbm
   catboost_later_gated_config.json
+  xgboost_model.json
+  xgboost_preprocessor.joblib
+  tabm_state.pt
+  tabm_preprocessor.joblib
+  xgboost_tabm_stack_config.json
 outputs/
   metrics.json
   model_comparison.csv
@@ -345,6 +374,10 @@ outputs/
   ft_dense_zero_dropout_history.csv
   autoencoder_history.csv
   autoencoder_comparison.csv
+  xgboost_validation_search.csv
+  tabm_history.csv
+  catboost_xgboost_tabm_stack_sweep.csv
+  xgboost_tabm_stack_comparison.csv
 ```
 
 ## Responsible use

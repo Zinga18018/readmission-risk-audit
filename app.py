@@ -48,6 +48,9 @@ required = [
     OUTPUTS / "catboost_final_improvement_comparison.csv",
     OUTPUTS / "autoencoder_comparison.csv",
     OUTPUTS / "ft_dense_zero_dropout_history.csv",
+    OUTPUTS / "xgboost_validation_search.csv",
+    OUTPUTS / "tabm_history.csv",
+    OUTPUTS / "xgboost_tabm_stack_comparison.csv",
     ARTIFACTS / "catboost_secondary_model.cbm",
     ARTIFACTS / "catboost_config.json",
 ]
@@ -95,6 +98,11 @@ catboost_final_comparison = pd.read_csv(
 )
 autoencoder_comparison = pd.read_csv(OUTPUTS / "autoencoder_comparison.csv")
 ft_dense_history = pd.read_csv(OUTPUTS / "ft_dense_zero_dropout_history.csv")
+xgboost_search = pd.read_csv(OUTPUTS / "xgboost_validation_search.csv")
+tabm_history = pd.read_csv(OUTPUTS / "tabm_history.csv")
+xgboost_tabm_comparison = pd.read_csv(
+    OUTPUTS / "xgboost_tabm_stack_comparison.csv"
+)
 
 (
     overview_tab,
@@ -368,6 +376,45 @@ with experiments_tab:
             "The unsupervised bottleneck removed predictive signal: the selected "
             "64-dimensional representation reached only 0.13364 validation PR-AUC."
         )
+
+    st.divider()
+    st.subheader("Final rescue pass: XGBoost + TabM + stacking")
+    st.dataframe(
+        xgboost_tabm_comparison[
+            xgboost_tabm_comparison["split"].isin(["validation", "test"])
+        ][
+            [
+                "model",
+                "split",
+                "roc_auc",
+                "pr_auc",
+                "f1",
+                "recall",
+                "accuracy",
+                "brier_score",
+                "ece_10_bin",
+            ]
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+    st.error(
+        "XGBoost improved validation PR-AUC to 0.17292 but fell to 0.15605 "
+        "on the later test cohort. TabM reached 0.15498, and the three-model "
+        "stack reached 0.16529. This is transfer failure under cohort shift, "
+        "not evidence that the test result should be tuned again."
+    )
+    left, right = st.columns(2)
+    with left:
+        st.write("XGBoost validation search")
+        st.dataframe(xgboost_search, width="stretch", hide_index=True)
+    with right:
+        st.write("TabM training history")
+        st.dataframe(tabm_history, width="stretch", hide_index=True)
+    st.caption(
+        "The existing native-categorical CatBoost ensemble remains the most "
+        "robust model on the patient-disjoint later encounter-order test cohort."
+    )
 
 with drift_tab:
     st.subheader("Calibration on the later encounter-order test cohort")

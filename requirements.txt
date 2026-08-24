@@ -7,3 +7,5 @@ torch>=2.3,<3
 streamlit>=1.36,<2
 plotly>=5.22,<7
 catboost>=1.2,<2
+xgboost>=3.4,<4
+tabm==0.0.3

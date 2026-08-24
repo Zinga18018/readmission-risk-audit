@@ -28,6 +28,9 @@ def main() -> None:
     autocorrelation = pd.read_csv(
         OUTPUTS / "autocorrelation_diagnostics.csv"
     )
+    xgboost_search = pd.read_csv(OUTPUTS / "xgboost_validation_search.csv")
+    tabm_history = pd.read_csv(OUTPUTS / "tabm_history.csv")
+    rescue = pd.read_csv(OUTPUTS / "xgboost_tabm_stack_comparison.csv")
 
     summary = {
         "status": "verified_complete",
@@ -96,6 +99,22 @@ def main() -> None:
                 "Encounter-ID ordering proxy only; the dataset has no row-level date."
             ),
         },
+        "final_rescue_pass": {
+            "xgboost_validation_best": records(xgboost_search.head(1))[0],
+            "tabm_best_epoch": records(
+                tabm_history.sort_values(
+                    "validation_pr_auc", ascending=False
+                ).head(1)
+            )[0],
+            "validation_and_test": records(
+                rescue[rescue["split"].isin(["validation", "test"])]
+            ),
+            "decision": "retain_existing_catboost_due_later_cohort_transfer",
+            "next_requirement": (
+                "Richer source predictors: real dates, labs, vitals, comorbidity "
+                "detail, hospital context, and behavioral or social-risk data."
+            ),
+        },
     }
     (OUTPUTS / "improvement_summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
@@ -104,4 +123,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
