@@ -12,6 +12,7 @@ from readmission_audit.pipeline import (
     engineer_clinical_features,
     make_features,
     make_patient_order_split,
+    mixed_type_feature_relevance,
     positive_probability_logits,
     softmax_probabilities,
     threshold_table,
@@ -151,6 +152,25 @@ class PipelineTests(unittest.TestCase):
         sweep = catboost_blend_sweep(y_true, primary, secondary)
         self.assertEqual(len(sweep), 21)
         self.assertTrue(sweep["primary_weight"].between(0.0, 1.0).all())
+
+    def test_mixed_type_relevance_ranks_informative_features(self):
+        target = np.array([0, 1] * 100)
+        frame = pd.DataFrame(
+            {
+                "numeric_signal": target.astype(float),
+                "categorical_signal": np.where(target == 1, "yes", "no"),
+                "constant_noise": 1.0,
+            }
+        )
+
+        ranking = mixed_type_feature_relevance(frame, target)
+
+        self.assertIn(ranking.iloc[0]["feature"], {
+            "numeric_signal",
+            "categorical_signal",
+        })
+        constant = ranking.loc[ranking["feature"] == "constant_noise"].iloc[0]
+        self.assertEqual(constant["mutual_information"], 0.0)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,9 @@ st.caption(
 required = [
     OUTPUTS / "metrics.json",
     OUTPUTS / "model_comparison.csv",
+    OUTPUTS / "feature_relevance.csv",
+    OUTPUTS / "top_k_feature_ablation.csv",
+    OUTPUTS / "top_k_final_comparison.csv",
     ARTIFACTS / "catboost_secondary_model.cbm",
     ARTIFACTS / "catboost_config.json",
 ]
@@ -67,6 +70,9 @@ dropout_sweep = pd.read_csv(OUTPUTS / "dropout_sweep.csv")
 ft_dropout_sweep = pd.read_csv(OUTPUTS / "ft_attention_dropout_sweep.csv")
 catboost_blend_sweep = pd.read_csv(OUTPUTS / "catboost_blend_sweep.csv")
 thresholds = pd.read_csv(OUTPUTS / "threshold_table.csv")
+feature_relevance = pd.read_csv(OUTPUTS / "feature_relevance.csv")
+top_k_ablation = pd.read_csv(OUTPUTS / "top_k_feature_ablation.csv")
+top_k_final = pd.read_csv(OUTPUTS / "top_k_final_comparison.csv")
 
 overview_tab, models_tab, drift_tab, demo_tab, leakage_tab = st.tabs(
     [
@@ -160,8 +166,25 @@ with models_tab:
         ),
         width="stretch",
     )
-    st.subheader("FT-Transformer threshold tradeoff on test")
+    st.subheader("Selected ensemble threshold tradeoff on test")
     st.dataframe(thresholds, width="stretch", hide_index=True)
+
+    st.subheader("Train-only feature ranking and validation top-k ablation")
+    st.dataframe(top_k_ablation, width="stretch", hide_index=True)
+    st.caption(
+        "Mutual information ranked numeric and categorical feature groups using "
+        "training data only. Validation selected k=50 by ROC-AUC, but its frozen "
+        "held-out result was worse than the full 71-feature ensemble."
+    )
+    left, right = st.columns(2)
+    with left:
+        st.write("Top 20 mixed-type relevance scores")
+        st.dataframe(
+            feature_relevance.head(20), width="stretch", hide_index=True
+        )
+    with right:
+        st.write("Frozen held-out comparison")
+        st.dataframe(top_k_final, width="stretch", hide_index=True)
 
 with drift_tab:
     st.subheader("Calibration on the later encounter-order test cohort")
@@ -170,7 +193,7 @@ with drift_tab:
         & calibration["model"].isin(
             [
                 "Logistic Regression",
-                "CatBoost",
+                "CatBoost tuned ensemble temperature-scaled",
                 "FT-Transformer temperature-scaled",
             ]
         )

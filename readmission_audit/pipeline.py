@@ -19,6 +19,7 @@ from scipy.spatial.distance import jensenshannon
 from scipy.stats import ks_2samp
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.feature_selection import mutual_info_classif
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -28,6 +29,7 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     log_loss,
+    normalized_mutual_info_score,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -401,6 +403,91 @@ def feature_types(X: pd.DataFrame) -> tuple[list[str], list[str]]:
     numeric = X.select_dtypes(include=["number", "bool"]).columns.tolist()
     categorical = [column for column in X.columns if column not in numeric]
     return numeric, categorical
+
+
+def mixed_type_feature_relevance(
+    X_train: pd.DataFrame, y_train: np.ndarray
+) -> pd.DataFrame:
+    """Rank pre-encoding feature groups using training data only.
+
+    Mutual information supplies one comparable nonlinear relevance score for
+    numeric and categorical fields. Absolute point-biserial correlation is
+    retained as an interpretable diagnostic for numeric features, while
+    normalized mutual information is reported for categorical features.
+    """
+    numeric, categorical = feature_types(X_train)
+    matrices: list[np.ndarray] = []
+    ordered_features = numeric + categorical
+
+    if numeric:
+        numeric_matrix = SimpleImputer(strategy="median").fit_transform(
+            X_train[numeric]
+        )
+        matrices.append(np.asarray(numeric_matrix, dtype=float))
+    else:
+        numeric_matrix = np.empty((len(X_train), 0), dtype=float)
+
+    if categorical:
+        categorical_values = SimpleImputer(
+            strategy="most_frequent"
+        ).fit_transform(X_train[categorical])
+        categorical_matrix = OrdinalEncoder(
+            handle_unknown="use_encoded_value", unknown_value=-1
+        ).fit_transform(categorical_values)
+        matrices.append(np.asarray(categorical_matrix, dtype=float))
+    else:
+        categorical_values = np.empty((len(X_train), 0), dtype=object)
+
+    matrix = np.column_stack(matrices)
+    discrete_mask = np.array(
+        [False] * len(numeric) + [True] * len(categorical), dtype=bool
+    )
+    relevance = mutual_info_classif(
+        matrix,
+        np.asarray(y_train, dtype=int),
+        discrete_features=discrete_mask,
+        random_state=SEED,
+    )
+    for index, feature in enumerate(ordered_features):
+        if X_train[feature].nunique(dropna=True) <= 1:
+            relevance[index] = 0.0
+
+    rows: list[dict[str, object]] = []
+    for index, feature in enumerate(ordered_features):
+        is_numeric = index < len(numeric)
+        point_biserial = float("nan")
+        normalized_categorical_mi = float("nan")
+        if is_numeric:
+            values = numeric_matrix[:, index]
+            if np.std(values) > 0:
+                point_biserial = float(
+                    abs(np.corrcoef(values, np.asarray(y_train, dtype=float))[0, 1])
+                )
+        else:
+            categorical_index = index - len(numeric)
+            normalized_categorical_mi = float(
+                normalized_mutual_info_score(
+                    np.asarray(y_train, dtype=int),
+                    categorical_values[:, categorical_index].astype(str),
+                )
+            )
+        rows.append(
+            {
+                "feature": feature,
+                "feature_type": "numeric" if is_numeric else "categorical",
+                "mutual_information": float(relevance[index]),
+                "abs_point_biserial": point_biserial,
+                "normalized_categorical_mi": normalized_categorical_mi,
+                "missing_rate": float(X_train[feature].isna().mean()),
+                "cardinality": int(X_train[feature].nunique(dropna=True)),
+            }
+        )
+
+    ranking = pd.DataFrame(rows).sort_values(
+        ["mutual_information", "feature"], ascending=[False, True]
+    )
+    ranking.insert(0, "rank", np.arange(1, len(ranking) + 1))
+    return ranking.reset_index(drop=True)
 
 
 def make_linear_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
@@ -1123,6 +1210,7 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
     y_validation = targets["validation"].to_numpy()
     X_test = features["test"]
     y_test = targets["test"].to_numpy()
+    feature_relevance = mixed_type_feature_relevance(X_train, y_train)
 
     linear_preprocessor = make_linear_preprocessor(X_train)
     train_matrix = linear_preprocessor.fit_transform(X_train)
@@ -1577,6 +1665,7 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         "ft_attention_dropout_sweep": ft_attention_dropout_sweep,
         "ft_train_history": ft_train_history,
         "feature_drift": drift,
+        "feature_relevance": feature_relevance,
         "catboost_blend_sweep": catboost_weight_sweep,
         "leakage_audit": leakage_audit,
         "artifacts": artifacts,
@@ -1612,6 +1701,7 @@ def write_outputs(
         ),
         ("ft_train_history", "ft_train_history.csv"),
         ("feature_drift", "feature_drift.csv"),
+        ("feature_relevance", "feature_relevance.csv"),
         ("catboost_blend_sweep", "catboost_blend_sweep.csv"),
     ):
         result[key].to_csv(output_dir / filename, index=False)

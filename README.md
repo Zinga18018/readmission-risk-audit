@@ -120,6 +120,32 @@ Distribution shift is measured from train to validation/test with:
 - validation-to-test changes in discrimination, threshold metrics, and
   calibration.
 
+## Feature-selection audit
+
+Feature ranking is performed before one-hot encoding and uses training data
+only. Mutual information provides a common nonlinear score for numerical and
+categorical/object features. Numeric fields also report absolute
+point-biserial correlation; categorical fields report normalized mutual
+information. Constants are forced to zero relevance.
+
+The tuned CatBoost primary was compared with the top `15`, `25`, `35`, `50`,
+and all `71` feature groups. Validation selected top 50 by ROC-AUC, after which
+its blend weight, temperature, and threshold were frozen before one test run.
+
+| Feature groups | Validation ROC-AUC | Validation PR-AUC |
+|---:|---:|---:|
+| 15 | 0.6143 | 0.1391 |
+| 25 | 0.6512 | 0.1595 |
+| 35 | 0.6517 | 0.1649 |
+| 50 | **0.6554** | 0.1697 |
+| 71 | 0.6550 | **0.1705** |
+
+The frozen top-50 model scored test ROC-AUC `0.6576` and PR-AUC `0.1695`,
+below the full production ensemble's `0.6612` and `0.1747`. Therefore the
+project keeps all 71 feature groups. This is a negative but useful result:
+univariate top-k filtering discarded weak individual features that contribute
+through interactions.
+
 ## Verified local results
 
 The checked-in values below are refreshed only after a successful full training
@@ -219,6 +245,9 @@ outputs/
   hgb_hyperparameter_search.csv
   calibration_curve.csv
   feature_drift.csv
+  feature_relevance.csv
+  top_k_feature_ablation.csv
+  top_k_final_comparison.csv
   performance_drift.csv
   leakage_audit.json
 ```
