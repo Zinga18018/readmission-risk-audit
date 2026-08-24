@@ -1,0 +1,58 @@
+{
+  "raw_rows": 101766,
+  "excluded_hospice_or_expired_rows": 2423,
+  "eligible_rows": 99343,
+  "unique_patients": 69990,
+  "duplicate_encounter_ids": 0,
+  "strategy": "patient-disjoint encounter-ID order proxy",
+  "calendar_time_claimed": false,
+  "train_encounter_id_cut": 205666594.79999998,
+  "validation_encounter_id_cut": 274901851.8,
+  "excluded_boundary_crossing_rows": 15722,
+  "excluded_boundary_crossing_patients": 4709,
+  "patient_overlap_counts": {
+    "train_validation": 0,
+    "train_test": 0,
+    "validation_test": 0
+  },
+  "splits": {
+    "train": {
+      "rows": 63512,
+      "patients": 47830,
+      "positive_rate": 0.11355334424990553,
+      "encounter_id_min": 12522,
+      "encounter_id_max": 205654272
+    },
+    "validation": {
+      "rows": 9287,
+      "patients": 8065,
+      "positive_rate": 0.08258856466027781,
+      "encounter_id_min": 205679886,
+      "encounter_id_max": 274900932
+    },
+    "test": {
+      "rows": 10822,
+      "patients": 9386,
+      "positive_rate": 0.08769173905008316,
+      "encounter_id_min": 274902246,
+      "encounter_id_max": 443867222
+    }
+  },
+  "target_removed_from_features": true,
+  "raw_readmitted_removed_from_features": true,
+  "identifier_features_removed": true,
+  "preprocessor_fit_scope": "train only",
+  "threshold_selection_scope": "validation only",
+  "temperature_scaling_scope": "validation logits only",
+  "test_used_for_training_or_selection": false,
+  "dnn_train_validation_gap": {
+    "pr_auc": 0.0968466730044184,
+    "roc_auc": 0.060107593743725096,
+    "log_loss_validation_minus_train": -0.04818126338214812
+  },
+  "ft_transformer_train_validation_gap": {
+    "pr_auc": 0.07008692128044647,
+    "roc_auc": 0.04014000682217145,
+    "log_loss_validation_minus_train": -0.04877679236582344
+  }
+}

@@ -1,6 +1,9 @@
-pandas>=2.2
-numpy>=2.0
-scikit-learn>=1.5
-streamlit>=1.36
-plotly>=5.22
-
+pandas>=2.2,<3
+numpy>=2.0,<3
+scipy>=1.13,<2
+scikit-learn>=1.5,<2
+joblib>=1.4,<2
+torch>=2.3,<3
+streamlit>=1.36,<2
+plotly>=5.22,<7
+catboost>=1.2,<2

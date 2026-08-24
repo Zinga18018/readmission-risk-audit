@@ -5,4 +5,4 @@ __pycache__/
 data/raw/
 data/processed/*.csv
 outputs/*.png
-
+streamlit.*.log
