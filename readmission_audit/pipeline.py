@@ -48,6 +48,7 @@ NOMINAL_ID_COLUMNS = (
 )
 HOSPICE_OR_EXPIRED_DISPOSITIONS = {11, 13, 14, 19, 20, 21}
 HIGH_MISSING_COLUMNS = {"weight", "payer_code", "medical_specialty"}
+LAB_RESULT_COLUMNS = ("max_glu_serum", "A1Cresult")
 DIAGNOSIS_COLUMNS = ("diag_1", "diag_2", "diag_3")
 MEDICATION_COLUMNS = (
     "metformin",
@@ -168,6 +169,16 @@ def engineer_clinical_features(frame: pd.DataFrame) -> pd.DataFrame:
     only strictly earlier encounters for that patient.
     """
     engineered = frame.copy()
+
+    # In this dataset, a missing lab result usually means that the test result
+    # was not recorded, not that a continuous value is unknown. Preserve that
+    # availability signal explicitly before categorical missing-value handling.
+    for column in LAB_RESULT_COLUMNS:
+        if column in engineered.columns:
+            engineered[f"{column}_recorded"] = (
+                engineered[column].notna()
+                & engineered[column].astype("string").ne("?")
+            ).astype("int8")
 
     for column in DIAGNOSIS_COLUMNS:
         if column in engineered.columns:
@@ -508,7 +519,12 @@ def make_linear_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
                 "categorical",
                 Pipeline(
                     [
-                        ("imputer", SimpleImputer(strategy="most_frequent")),
+                        (
+                            "imputer",
+                            SimpleImputer(
+                                strategy="constant", fill_value="Missing"
+                            ),
+                        ),
                         (
                             "encoder",
                             OneHotEncoder(
@@ -873,7 +889,9 @@ class FTPreprocessor:
         self.numeric_features, self.categorical_features = feature_types(X)
         self.numeric_imputer = SimpleImputer(strategy="median")
         self.numeric_scaler = StandardScaler()
-        self.categorical_imputer = SimpleImputer(strategy="most_frequent")
+        self.categorical_imputer = SimpleImputer(
+            strategy="constant", fill_value="Missing"
+        )
         self.categorical_encoder = OrdinalEncoder(
             handle_unknown="use_encoded_value",
             unknown_value=-1,
@@ -1092,6 +1110,11 @@ def _train_one_ft_transformer(
     y_validation: np.ndarray,
     category_cardinalities: list[int],
     attention_dropout: float,
+    token_dimension: int = 64,
+    transformer_blocks: int = 3,
+    attention_heads: int = 8,
+    feedforward_dimension: int = 128,
+    feedforward_dropout: float = 0.10,
     max_epochs: int = 16,
     patience: int = 3,
     batch_size: int = 512,
@@ -1100,7 +1123,12 @@ def _train_one_ft_transformer(
     model = FTTransformer(
         numeric_features=train_numeric.shape[1],
         category_cardinalities=category_cardinalities,
+        token_dimension=token_dimension,
+        transformer_blocks=transformer_blocks,
+        attention_heads=attention_heads,
+        feedforward_dimension=feedforward_dimension,
         attention_dropout=attention_dropout,
+        feedforward_dropout=feedforward_dropout,
     )
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=5e-4, weight_decay=1e-5
@@ -1166,6 +1194,11 @@ def _train_one_ft_transformer(
     model.load_state_dict(best_state)
     summary = {
         "attention_dropout": float(attention_dropout),
+        "feedforward_dropout": float(feedforward_dropout),
+        "token_dimension": int(token_dimension),
+        "transformer_blocks": int(transformer_blocks),
+        "attention_heads": int(attention_heads),
+        "feedforward_dimension": int(feedforward_dimension),
         "best_epoch": int(best_epoch),
         "validation_pr_auc": float(best_pr_auc),
         "epochs_run": int(len(history)),

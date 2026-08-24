@@ -3,7 +3,10 @@
 This project predicts **binary readmission within 30 days** for diabetes-related
 hospital encounters. One shared experiment runner compares logistic regression,
 histogram gradient boosting, CatBoost, a shallow DNN, and FT-Transformer using
-the same leakage-safe split and evaluation protocol.
+the same leakage-safe split and evaluation protocol. A second improvement lab
+audits missingness, categorical association, encounter-order autocorrelation,
+patient-grouped CatBoost tuning, a denser zero-dropout FT-Transformer, and
+autoencoder bottlenecks.
 
 The project is an educational model audit, not a clinical product.
 
@@ -86,6 +89,11 @@ numerical feature projections + categorical embeddings
 - selection metric: validation PR-AUC
 - calibration: validation-only temperature scaling
 
+The improvement lab also trains one controlled denser candidate with
+96-dimensional tokens, four blocks, eight heads, a 256-unit feed-forward layer,
+and zero attention/feed-forward dropout. It is reported as an experiment rather
+than silently replacing the better validated model.
+
 ### Shallow PyTorch DNN
 
 ```text
@@ -146,6 +154,72 @@ project keeps all 71 feature groups. This is a negative but useful result:
 univariate top-k filtering discarded weak individual features that contribute
 through interactions.
 
+## Missingness and statistical audit
+
+All missingness and feature-quality decisions are computed from training data.
+Exact raw missing rates are:
+
+| Raw field | Missing | Decision |
+|---|---:|---|
+| `weight` | 96.86% | Exclude |
+| `max_glu_serum` | 94.75% | Retain category + recorded indicator |
+| `A1Cresult` | 83.28% | Retain category + recorded indicator |
+| `medical_specialty` | 49.08% | Exclude |
+| `payer_code` | 39.56% | Exclude |
+| `race` | 2.23% | Retain explicit missing category |
+
+The two lab-result fields are not treated as ordinary numerical missingness:
+"not recorded" can describe care delivery, so the pipeline keeps the category
+and adds `max_glu_serum_recorded` and `A1Cresult_recorded`.
+
+Five medication fields are constant in training and six have fewer than 50
+non-modal rows. Nevertheless, validation-only ablation selected all 73 current
+engineered fields (PR-AUC `0.16919`) over dropping constants (`0.16555`),
+dropping constants plus ultra-rare fields (`0.16764`), or also dropping sparse
+lab results (`0.16787`). Sparse fields are therefore documented, not blindly
+removed.
+
+For categorical features, `outputs/categorical_chi_square_audit.csv` reports a
+target-independence chi-square test, FDR-adjusted p-value, Cramer's V, minimum
+expected count, and an assumption-validity flag. A uniform goodness-of-fit test
+is included only as a requested diagnostic: clinical categories are not
+expected to be uniform, so it cannot establish that the dataset is "neatly
+spread" or non-random.
+
+`outputs/autocorrelation_diagnostics.csv` reports ACF and cumulative Ljung-Box
+statistics for the target and model residuals under encounter-ID order. The
+source has no row-level dates, so these are ordering-proxy diagnostics rather
+than time-series stationarity claims. At lag 20, target ACF was `0.0019`
+(`p=0.4968`); the selected CatBoost residual ACF was `-0.00018` while the
+cumulative lag-20 Ljung-Box test gave `p=0.0147`. The individual correlation
+amplitude is tiny, while the omnibus residual result is surfaced rather than
+over-interpreted.
+
+## Improvement experiments (verified negative/marginal results)
+
+Six CatBoost configurations were evaluated with three-fold
+`StratifiedGroupKFold`, keeping patients disjoint. The best within-training
+mean CV PR-AUC was `0.23774`, but its train-CV gap was `0.09703` and transfer to
+the later encounter-order validation cohort was much weaker. A separate later
+validation gate therefore selected the final pair before test evaluation.
+
+| Candidate | Test ROC-AUC | Test PR-AUC | F1 | Recall | Brier |
+|---|---:|---:|---:|---:|---:|
+| Existing CatBoost ensemble | 0.66124 | 0.17465 | **0.21872** | 0.32877 | 0.07731 |
+| Later-validation-gated CatBoost pair | **0.66344** | 0.17386 | 0.21462 | 0.29399 | 0.07734 |
+| Existing + new CatBoost blend | 0.66189 | **0.17469** | 0.21771 | **0.36143** | **0.07729** |
+
+The larger blend's PR-AUC gain is only `0.000036` while F1 and accuracy fall.
+The existing ensemble remains the primary saved demo model because the marginal
+change does not justify a more complex four-model inference path.
+
+The denser zero-dropout FT-Transformer stopped at epoch 2. It reached test
+ROC-AUC `0.65271` and PR-AUC `0.15575`: better ROC-AUC than the prior FT model,
+but worse PR-AUC and still below CatBoost. The best autoencoder experiment used
+a 64-dimensional bottleneck plus histogram gradient boosting and reached only
+test ROC-AUC `0.62822` and PR-AUC `0.13398`. The autoencoder removed predictive
+signal rather than useful fluff, so it is not used in the final model.
+
 ## Verified local results
 
 The checked-in values below are refreshed only after a successful full training
@@ -162,7 +236,8 @@ eligible after hospice/death:    99,343
 modeling rows after boundaries:  83,621
 train / validation / test:       63,512 / 9,287 / 10,822
 patient overlap across splits:   0
-engineered features:                71
+primary-model engineered features: 71
+improvement-lab feature groups:     73
 encoded DNN input features:        839
 FT feature tokens:                  71 + CLS
 selected DNN dropout:              0.05
@@ -207,6 +282,8 @@ $ReadmissionVenv = "$env:USERPROFILE\Documents\Codex\.venvs\readmission-risk"
 python -m venv $ReadmissionVenv
 & "$ReadmissionVenv\Scripts\python.exe" -m pip install -r requirements.txt
 & "$ReadmissionVenv\Scripts\python.exe" scripts\build_readmission_audit.py
+& "$ReadmissionVenv\Scripts\python.exe" -m scripts.run_improvement_experiments
+& "$ReadmissionVenv\Scripts\python.exe" -m scripts.finalize_catboost_improvement
 & "$ReadmissionVenv\Scripts\python.exe" -m streamlit run app.py
 ```
 
@@ -234,6 +311,13 @@ artifacts/
   logistic_model.joblib
   tree_model.joblib
   model_config.json
+  ft_dense_zero_dropout_state.pt
+  ft_dense_zero_dropout_config.json
+  autoencoder_state.pt
+  autoencoder_config.json
+  catboost_later_gated_primary.cbm
+  catboost_later_gated_secondary.cbm
+  catboost_later_gated_config.json
 outputs/
   metrics.json
   model_comparison.csv
@@ -250,6 +334,17 @@ outputs/
   top_k_final_comparison.csv
   performance_drift.csv
   leakage_audit.json
+  raw_missingness_audit.csv
+  feature_quality_audit.csv
+  categorical_chi_square_audit.csv
+  autocorrelation_diagnostics.csv
+  feature_pruning_ablation.csv
+  catboost_group_grid_search.csv
+  catboost_later_validation_gate.csv
+  catboost_final_improvement_comparison.csv
+  ft_dense_zero_dropout_history.csv
+  autoencoder_history.csv
+  autoencoder_comparison.csv
 ```
 
 ## Responsible use

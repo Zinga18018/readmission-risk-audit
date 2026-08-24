@@ -1,0 +1,5 @@
+candidate,feature_count,dropped_feature_count,dropped_features,validation_pr_auc,validation_roc_auc
+all_features,73,0,,0.1691894698724874,0.650801549846668
+drop_ultra_rare_and_sparse_lab_results,60,13,A1Cresult|acetohexamide|citoglipton|examide|glimepiride-pioglitazone|glipizide-metformin|max_glu_serum|metformin-pioglitazone|metformin-rosiglitazone|miglitol|tolazamide|tolbutamide|troglitazone,0.1678699228645509,0.6515815230365242
+drop_constants_and_ultra_rare,62,11,examide|citoglipton|glimepiride-pioglitazone|metformin-rosiglitazone|metformin-pioglitazone|acetohexamide|troglitazone|glipizide-metformin|tolbutamide|miglitol|tolazamide,0.16763844508673373,0.6512199227525082
+drop_exact_constants,68,5,examide|citoglipton|glimepiride-pioglitazone|metformin-rosiglitazone|metformin-pioglitazone,0.16555430490127704,0.6515379106450961

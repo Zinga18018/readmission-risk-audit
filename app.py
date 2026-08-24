@@ -38,6 +38,16 @@ required = [
     OUTPUTS / "feature_relevance.csv",
     OUTPUTS / "top_k_feature_ablation.csv",
     OUTPUTS / "top_k_final_comparison.csv",
+    OUTPUTS / "raw_missingness_audit.csv",
+    OUTPUTS / "feature_quality_audit.csv",
+    OUTPUTS / "categorical_chi_square_audit.csv",
+    OUTPUTS / "autocorrelation_diagnostics.csv",
+    OUTPUTS / "feature_pruning_ablation.csv",
+    OUTPUTS / "catboost_group_grid_search.csv",
+    OUTPUTS / "catboost_later_validation_gate.csv",
+    OUTPUTS / "catboost_final_improvement_comparison.csv",
+    OUTPUTS / "autoencoder_comparison.csv",
+    OUTPUTS / "ft_dense_zero_dropout_history.csv",
     ARTIFACTS / "catboost_secondary_model.cbm",
     ARTIFACTS / "catboost_config.json",
 ]
@@ -73,11 +83,33 @@ thresholds = pd.read_csv(OUTPUTS / "threshold_table.csv")
 feature_relevance = pd.read_csv(OUTPUTS / "feature_relevance.csv")
 top_k_ablation = pd.read_csv(OUTPUTS / "top_k_feature_ablation.csv")
 top_k_final = pd.read_csv(OUTPUTS / "top_k_final_comparison.csv")
+raw_missingness = pd.read_csv(OUTPUTS / "raw_missingness_audit.csv")
+feature_quality = pd.read_csv(OUTPUTS / "feature_quality_audit.csv")
+chi_square_audit = pd.read_csv(OUTPUTS / "categorical_chi_square_audit.csv")
+autocorrelation = pd.read_csv(OUTPUTS / "autocorrelation_diagnostics.csv")
+feature_pruning = pd.read_csv(OUTPUTS / "feature_pruning_ablation.csv")
+catboost_group_grid = pd.read_csv(OUTPUTS / "catboost_group_grid_search.csv")
+catboost_later_gate = pd.read_csv(OUTPUTS / "catboost_later_validation_gate.csv")
+catboost_final_comparison = pd.read_csv(
+    OUTPUTS / "catboost_final_improvement_comparison.csv"
+)
+autoencoder_comparison = pd.read_csv(OUTPUTS / "autoencoder_comparison.csv")
+ft_dense_history = pd.read_csv(OUTPUTS / "ft_dense_zero_dropout_history.csv")
 
-overview_tab, models_tab, drift_tab, demo_tab, leakage_tab = st.tabs(
+(
+    overview_tab,
+    models_tab,
+    feature_audit_tab,
+    experiments_tab,
+    drift_tab,
+    demo_tab,
+    leakage_tab,
+) = st.tabs(
     [
         "Overview",
         "Model comparison",
+        "Feature & missingness audit",
+        "Improvement experiments",
         "Calibration & drift",
         "Try tuned ensemble",
         "Leakage audit",
@@ -105,6 +137,11 @@ with overview_tab:
         "medication and utilization intensity, and strictly prior encounter history. "
         "Hyperparameters, blend weight, probability temperature, and threshold were "
         "selected without using the test set."
+    )
+    st.info(
+        "The original tuned CatBoost ensemble remains primary. A new grouped-grid "
+        "search, denser zero-dropout FT-Transformer, and autoencoder were audited; "
+        "none produced a meaningful held-out PR-AUC improvement."
     )
     left, right = st.columns(2)
     with left:
@@ -185,6 +222,152 @@ with models_tab:
     with right:
         st.write("Frozen held-out comparison")
         st.dataframe(top_k_final, width="stretch", hide_index=True)
+
+with feature_audit_tab:
+    st.subheader("What is missing, and what was done")
+    st.dataframe(
+        raw_missingness.loc[raw_missingness["missing_rate"] > 0],
+        width="stretch",
+        hide_index=True,
+    )
+    st.caption(
+        "Weight, payer code, and medical specialty remain excluded for high "
+        "missingness. A1C and glucose results remain categorical because 'not "
+        "recorded' is meaningful; explicit recorded/not-recorded indicators were added."
+    )
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Constant and ultra-rare training fields")
+        sparse_fields = feature_quality[
+            feature_quality["exact_constant"]
+            | feature_quality["ultra_rare_non_mode_lt_50"]
+        ]
+        st.dataframe(
+            sparse_fields[
+                [
+                    "feature",
+                    "exact_constant",
+                    "non_mode_rows",
+                    "top_value_share",
+                ]
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+    with right:
+        st.subheader("Validation-only pruning result")
+        st.dataframe(feature_pruning, width="stretch", hide_index=True)
+        st.caption(
+            "All 73 engineered fields won validation PR-AUC. The project therefore "
+            "does not drop a feature merely because it is sparse or incomplete."
+        )
+
+    st.subheader("Categorical target association: chi-square + Cramér's V")
+    st.dataframe(
+        chi_square_audit[
+            [
+                "feature",
+                "cramers_v",
+                "target_independence_fdr_p_value",
+                "minimum_expected_count",
+                "chi_square_assumptions_met",
+                "uniform_gof_p_value",
+            ]
+        ].head(25),
+        width="stretch",
+        hide_index=True,
+    )
+    st.warning(
+        "A uniform goodness-of-fit test does not prove that clinical data are "
+        "'neatly spread' or non-random. Target-independence chi-square is the useful "
+        "association test here; Cramér's V supplies effect size, and invalid low-count "
+        "tables are flagged."
+    )
+
+    st.subheader("Encounter-order ACF and Ljung-Box diagnostic")
+    st.plotly_chart(
+        px.line(
+            autocorrelation,
+            x="lag",
+            y="acf",
+            color="series",
+            markers=True,
+        ),
+        width="stretch",
+    )
+    st.caption(
+        "The UCI file has no row-level dates. This is an encounter-ID ordering proxy, "
+        "not a claim about calendar-time autocorrelation or stationarity."
+    )
+
+with experiments_tab:
+    st.subheader("Patient-grouped CatBoost grid search")
+    st.dataframe(
+        catboost_group_grid[
+            [
+                "candidate",
+                "depth",
+                "learning_rate",
+                "l2_leaf_reg",
+                "bagging_temperature",
+                "mean_test_pr_auc",
+                "std_test_pr_auc",
+                "pr_auc_train_cv_gap",
+            ]
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+    st.caption(
+        "Patients never cross folds. The large grouped-CV to later-validation gap "
+        "shows encounter-order cohort shift, so each candidate also passed through "
+        "a separate later-cohort validation gate."
+    )
+    st.subheader("Later-cohort validation gate")
+    st.dataframe(catboost_later_gate, width="stretch", hide_index=True)
+
+    st.subheader("Final CatBoost comparison")
+    st.dataframe(
+        catboost_final_comparison[
+            catboost_final_comparison["split"].isin(["validation", "test"])
+        ][
+            [
+                "model",
+                "split",
+                "roc_auc",
+                "pr_auc",
+                "f1",
+                "recall",
+                "accuracy",
+                "brier_score",
+                "ece_10_bin",
+            ]
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+    st.success(
+        "Decision: retain the existing CatBoost ensemble. The larger blend changed "
+        "test PR-AUC from 0.174654 to 0.174690 but reduced F1 and accuracy; the gain "
+        "is too small to justify added complexity."
+    )
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Dense zero-dropout FT-Transformer")
+        st.dataframe(ft_dense_history, width="stretch", hide_index=True)
+        st.caption(
+            "96-dimensional tokens, 4 blocks, 8 heads, 256-unit feed-forward layer, "
+            "0 attention dropout, and 0 feed-forward dropout."
+        )
+    with right:
+        st.subheader("Autoencoder bottlenecks")
+        st.dataframe(autoencoder_comparison, width="stretch", hide_index=True)
+        st.caption(
+            "The unsupervised bottleneck removed predictive signal: the selected "
+            "64-dimensional representation reached only 0.13364 validation PR-AUC."
+        )
 
 with drift_tab:
     st.subheader("Calibration on the later encounter-order test cohort")

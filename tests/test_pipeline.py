@@ -4,6 +4,11 @@ import numpy as np
 import pandas as pd
 import torch
 
+from readmission_audit.experiments import (
+    autocorrelation_audit,
+    categorical_chi_square_audit,
+    feature_quality_audit,
+)
 from readmission_audit.pipeline import (
     FTTransformer,
     ReadmissionDNN,
@@ -171,6 +176,42 @@ class PipelineTests(unittest.TestCase):
         })
         constant = ranking.loc[ranking["feature"] == "constant_noise"].iloc[0]
         self.assertEqual(constant["mutual_information"], 0.0)
+
+    def test_feature_quality_flags_constant_and_structural_missingness(self):
+        frame = pd.DataFrame(
+            {
+                "constant": ["same"] * 60,
+                "rare": ["usual"] * 59 + ["rare"],
+                "prior_mean_time_in_hospital": [np.nan] * 30 + [2.0] * 30,
+            }
+        )
+
+        audit = feature_quality_audit(frame).set_index("feature")
+
+        self.assertTrue(audit.loc["constant", "exact_constant"])
+        self.assertTrue(audit.loc["rare", "ultra_rare_non_mode_lt_50"])
+        self.assertEqual(
+            audit.loc["prior_mean_time_in_hospital", "missing_type"],
+            "structural_no_prior_encounter",
+        )
+
+    def test_chi_square_audit_reports_effect_size_and_adjusted_p_value(self):
+        target = np.array([0, 1] * 100)
+        frame = pd.DataFrame(
+            {"signal": np.where(target == 1, "positive", "negative")}
+        )
+
+        audit = categorical_chi_square_audit(frame, target).iloc[0]
+
+        self.assertGreater(audit["cramers_v"], 0.9)
+        self.assertLess(audit["target_independence_fdr_p_value"], 0.05)
+        self.assertTrue(audit["chi_square_assumptions_met"])
+
+    def test_autocorrelation_audit_returns_requested_lags(self):
+        audit = autocorrelation_audit([0, 1] * 100, "alternating", max_lag=5)
+
+        self.assertEqual(audit["lag"].tolist(), [1, 2, 3, 4, 5])
+        self.assertLess(audit.loc[audit["lag"] == 1, "acf"].iloc[0], -0.9)
 
 
 if __name__ == "__main__":

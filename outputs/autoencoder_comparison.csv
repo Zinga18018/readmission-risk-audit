@@ -1,0 +1,5 @@
+latent_dim,classifier,validation_pr_auc,validation_roc_auc,selected
+64,HistGradientBoosting,0.13363699728371708,0.6181309718371069,True
+32,HistGradientBoosting,0.13228881941614093,0.6133818119494892,False
+64,LogisticRegression,0.13216318007362637,0.6188007663538817,False
+32,LogisticRegression,0.13004594066908232,0.6103907670271957,False
