@@ -61,7 +61,7 @@ def main() -> None:
     write_outputs(result, OUTPUT_DIR, ARTIFACT_DIR)
 
     metrics = result["metrics"]
-    test = metrics["ft_test"]
+    test = metrics["best_model_test"]
     print(
         f"modeling_rows={metrics['modeling_rows']} "
         f"encoded_features={metrics['encoded_features']}",
@@ -74,7 +74,8 @@ def main() -> None:
         flush=True,
     )
     print(
-        "ft_transformer_test "
+        "best_model_test "
+        f"model={metrics['best_model']} "
         f"roc_auc={test['roc_auc']:.4f} "
         f"pr_auc={test['pr_auc']:.4f} "
         f"f1={test['f1']:.4f} "

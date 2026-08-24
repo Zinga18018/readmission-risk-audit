@@ -3,14 +3,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import joblib
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import torch
+from catboost import CatBoostClassifier
 
-from readmission_audit.pipeline import FTTransformer, softmax_probabilities
+from readmission_audit.pipeline import (
+    positive_probability_logits,
+    prepare_catboost_features,
+    prepare_model_features,
+    softmax_probabilities,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -31,7 +35,8 @@ st.caption(
 required = [
     OUTPUTS / "metrics.json",
     OUTPUTS / "model_comparison.csv",
-    ARTIFACTS / "ft_transformer_state.pt",
+    ARTIFACTS / "catboost_secondary_model.cbm",
+    ARTIFACTS / "catboost_config.json",
 ]
 if not all(path.exists() for path in required):
     st.warning("Run `python scripts/build_readmission_audit.py` first.")
@@ -43,28 +48,13 @@ def read_json(path: Path) -> dict:
 
 
 @st.cache_resource
-def load_ft_artifacts():
-    config = read_json(ARTIFACTS / "ft_transformer_config.json")
-    preprocessor = joblib.load(ARTIFACTS / "ft_preprocessor.joblib")
-    model = FTTransformer(
-        numeric_features=config["numeric_features"],
-        category_cardinalities=config["category_cardinalities"],
-        token_dimension=config["token_dimension"],
-        transformer_blocks=config["transformer_blocks"],
-        attention_heads=config["attention_heads"],
-        feedforward_dimension=config["feedforward_dimension"],
-        attention_dropout=config["attention_dropout"],
-        feedforward_dropout=config["feedforward_dropout"],
-    )
-    model.load_state_dict(
-        torch.load(
-            ARTIFACTS / "ft_transformer_state.pt",
-            map_location="cpu",
-            weights_only=True,
-        )
-    )
-    model.eval()
-    return config, preprocessor, model
+def load_catboost_artifacts():
+    config = read_json(ARTIFACTS / "catboost_config.json")
+    primary = CatBoostClassifier()
+    primary.load_model(ARTIFACTS / "catboost_model.cbm")
+    secondary = CatBoostClassifier()
+    secondary.load_model(ARTIFACTS / "catboost_secondary_model.cbm")
+    return config, primary, secondary
 
 
 metrics = read_json(OUTPUTS / "metrics.json")
@@ -75,6 +65,7 @@ calibration = pd.read_csv(OUTPUTS / "calibration_curve.csv")
 feature_drift = pd.read_csv(OUTPUTS / "feature_drift.csv")
 dropout_sweep = pd.read_csv(OUTPUTS / "dropout_sweep.csv")
 ft_dropout_sweep = pd.read_csv(OUTPUTS / "ft_attention_dropout_sweep.csv")
+catboost_blend_sweep = pd.read_csv(OUTPUTS / "catboost_blend_sweep.csv")
 thresholds = pd.read_csv(OUTPUTS / "threshold_table.csv")
 
 overview_tab, models_tab, drift_tab, demo_tab, leakage_tab = st.tabs(
@@ -82,13 +73,13 @@ overview_tab, models_tab, drift_tab, demo_tab, leakage_tab = st.tabs(
         "Overview",
         "Model comparison",
         "Calibration & drift",
-        "Try FT-Transformer",
+        "Try tuned ensemble",
         "Leakage audit",
     ]
 )
 
 with overview_tab:
-    test = metrics["ft_test"]
+    test = metrics["best_model_test"]
     columns = st.columns(7)
     columns[0].metric("Raw encounters", f"{metrics['raw_rows']:,}")
     columns[1].metric("Modeled encounters", f"{metrics['modeling_rows']:,}")
@@ -98,22 +89,27 @@ with overview_tab:
     columns[5].metric("Recall", f"{test['recall']:.3f}")
     columns[6].metric("Brier", f"{test['brier_score']:.3f}")
 
-    st.subheader("What was trained")
+    st.subheader("Selected model")
     st.code(
-        "numeric + categorical feature tokens → CLS token → "
-        "3 Transformer blocks → Linear(2 raw logits)"
+        "engineered clinical features → tuned CatBoost depth-5/depth-8 blend "
+        "→ validation-only temperature scaling"
     )
     st.write(
-        "FT-Transformer training uses `CrossEntropyLoss` on raw logits. Softmax is applied only "
-        "during evaluation and inference. A validation-selected temperature "
-        "rescales logits before softmax; its held-out calibration effect is reported "
-        "rather than assumed."
+        "The selected ensemble uses richer diagnosis groups and three-digit codes, "
+        "medication and utilization intensity, and strictly prior encounter history. "
+        "Hyperparameters, blend weight, probability temperature, and threshold were "
+        "selected without using the test set."
     )
     left, right = st.columns(2)
     with left:
-        st.subheader("FT attention-dropout sweep")
-        st.dataframe(ft_dropout_sweep, width="stretch", hide_index=True)
-        with st.expander("Simple DNN dropout sweep"):
+        st.subheader("CatBoost blend sweep")
+        st.dataframe(
+            catboost_blend_sweep.head(10), width="stretch", hide_index=True
+        )
+        with st.expander("Neural dropout experiments"):
+            st.write("FT-Transformer attention dropout")
+            st.dataframe(ft_dropout_sweep, width="stretch", hide_index=True)
+            st.write("Simple DNN dropout")
             st.dataframe(dropout_sweep, width="stretch", hide_index=True)
     with right:
         st.subheader("Patient-aware ordered split")
@@ -220,12 +216,12 @@ with drift_tab:
     )
 
 with demo_tab:
-    st.subheader("Single-encounter FT-Transformer inference")
+    st.subheader("Single-encounter tuned CatBoost ensemble inference")
     st.info(
         "This illustrates the saved preprocessing and model artifact. It does not "
         "provide medical advice or a clinically validated score."
     )
-    config, preprocessor, ft_model = load_ft_artifacts()
+    config, primary_model, secondary_model = load_catboost_artifacts()
     defaults = read_json(ARTIFACTS / "demo_defaults.json")
     options = read_json(ARTIFACTS / "demo_options.json")
     values = dict(defaults)
@@ -279,16 +275,19 @@ with demo_tab:
                     label, options[field], index=default_index
                 )
 
-    row = pd.DataFrame([values], columns=config["feature_columns"])
-    numeric, categorical = preprocessor.transform(row)
-    with torch.no_grad():
-        logits = ft_model(
-            torch.tensor(numeric, dtype=torch.float32),
-            torch.tensor(categorical, dtype=torch.long),
-        ).numpy()
-    probability = float(
-        softmax_probabilities(logits, config["temperature"])[0, 1]
+    raw_row = pd.DataFrame([values], columns=config["raw_feature_columns"])
+    row = prepare_model_features(raw_row).reindex(
+        columns=config["feature_columns"]
     )
+    row = prepare_catboost_features(row, config["categorical_features"])
+    primary_probability = primary_model.predict_proba(row)[:, 1]
+    secondary_probability = secondary_model.predict_proba(row)[:, 1]
+    blended_probability = (
+        config["primary_weight"] * primary_probability
+        + config["secondary_weight"] * secondary_probability
+    )
+    logits = positive_probability_logits(blended_probability)
+    probability = float(softmax_probabilities(logits, config["temperature"])[0, 1])
     flagged = probability >= config["threshold"]
     result_column, explanation_column = st.columns([1, 2])
     result_column.metric("Estimated <30-day probability", f"{probability:.1%}")

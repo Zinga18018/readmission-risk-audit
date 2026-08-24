@@ -44,15 +44,18 @@
   "preprocessor_fit_scope": "train only",
   "threshold_selection_scope": "validation only",
   "temperature_scaling_scope": "validation logits only",
+  "catboost_hyperparameter_selection_scope": "validation only",
+  "catboost_blend_weight_selection_scope": "validation only",
+  "patient_history_rule": "shifted/cumulative encounter-ID order; strictly prior rows only",
   "test_used_for_training_or_selection": false,
   "dnn_train_validation_gap": {
-    "pr_auc": 0.0968466730044184,
-    "roc_auc": 0.060107593743725096,
-    "log_loss_validation_minus_train": -0.04818126338214812
+    "pr_auc": 0.11133050009410678,
+    "roc_auc": 0.07620452821002599,
+    "log_loss_validation_minus_train": -0.0388180528469913
   },
   "ft_transformer_train_validation_gap": {
-    "pr_auc": 0.07008692128044647,
-    "roc_auc": 0.04014000682217145,
-    "log_loss_validation_minus_train": -0.04877679236582344
+    "pr_auc": 0.09466548597238117,
+    "roc_auc": 0.0671170200283423,
+    "log_loss_validation_minus_train": -0.04397754093238687
   }
 }

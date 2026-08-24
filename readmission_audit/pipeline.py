@@ -47,6 +47,31 @@ NOMINAL_ID_COLUMNS = (
 HOSPICE_OR_EXPIRED_DISPOSITIONS = {11, 13, 14, 19, 20, 21}
 HIGH_MISSING_COLUMNS = {"weight", "payer_code", "medical_specialty"}
 DIAGNOSIS_COLUMNS = ("diag_1", "diag_2", "diag_3")
+MEDICATION_COLUMNS = (
+    "metformin",
+    "repaglinide",
+    "nateglinide",
+    "chlorpropamide",
+    "glimepiride",
+    "acetohexamide",
+    "glipizide",
+    "glyburide",
+    "tolbutamide",
+    "pioglitazone",
+    "rosiglitazone",
+    "acarbose",
+    "miglitol",
+    "troglitazone",
+    "tolazamide",
+    "examide",
+    "citoglipton",
+    "insulin",
+    "glyburide-metformin",
+    "glipizide-metformin",
+    "glimepiride-pioglitazone",
+    "metformin-rosiglitazone",
+    "metformin-pioglitazone",
+)
 
 
 def set_reproducible_seed(seed: int = SEED) -> None:
@@ -72,23 +97,192 @@ def diagnosis_family(value: object) -> str:
         number = float(text)
     except ValueError:
         return "Other"
+    if 1 <= number <= 139:
+        return "Infectious"
+    if 140 <= number <= 239:
+        return "Neoplasms"
+    if 250 <= number < 251:
+        return "Diabetes"
+    if 240 <= number <= 279:
+        return "Endocrine"
+    if 280 <= number <= 289:
+        return "Blood"
+    if 290 <= number <= 319:
+        return "Mental"
+    if 320 <= number <= 389:
+        return "Nervous_sense"
     if 390 <= number <= 459 or number == 785:
         return "Circulatory"
     if 460 <= number <= 519 or number == 786:
         return "Respiratory"
     if 520 <= number <= 579 or number == 787:
         return "Digestive"
-    if 250 <= number < 251:
-        return "Diabetes"
-    if 800 <= number <= 999:
-        return "Injury"
-    if 710 <= number <= 739:
-        return "Musculoskeletal"
     if 580 <= number <= 629 or number == 788:
         return "Genitourinary"
-    if 140 <= number <= 239:
-        return "Neoplasms"
+    if 630 <= number <= 679:
+        return "Pregnancy"
+    if 680 <= number <= 709:
+        return "Skin"
+    if 710 <= number <= 739:
+        return "Musculoskeletal"
+    if 740 <= number <= 759:
+        return "Congenital"
+    if 760 <= number <= 779:
+        return "Perinatal"
+    if 780 <= number <= 799:
+        return "Symptoms"
+    if 800 <= number <= 999:
+        return "Injury"
     return "Other"
+
+
+def diagnosis_three_digit(value: object) -> str:
+    """Retain useful diagnosis detail without treating codes as quantities."""
+    if pd.isna(value):
+        return "Missing"
+    text = str(value).strip().upper()
+    if not text or text == "?":
+        return "Missing"
+    return text.split(".", maxsplit=1)[0]
+
+
+def age_midpoint(value: object) -> float:
+    """Convert UCI age bands such as ``[60-70)`` to a numeric midpoint."""
+    if pd.isna(value):
+        return float("nan")
+    text = str(value).strip().strip("[]()")
+    try:
+        lower, upper = text.split("-", maxsplit=1)
+        return (float(lower) + float(upper)) / 2.0
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def engineer_clinical_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Create admission-time features without reading future encounters.
+
+    Encounter ID supplies ordering only because the source data has no row-level
+    timestamp. Patient history uses shifted/cumulative values, so each row sees
+    only strictly earlier encounters for that patient.
+    """
+    engineered = frame.copy()
+
+    for column in DIAGNOSIS_COLUMNS:
+        if column in engineered.columns:
+            engineered[f"{column}_family"] = engineered[column].map(
+                diagnosis_family
+            )
+            engineered[f"{column}_three_digit"] = engineered[column].map(
+                diagnosis_three_digit
+            )
+            engineered[column] = (
+                engineered[column].astype("string").fillna("Missing")
+            )
+
+    if "age" in engineered.columns:
+        engineered["age_midpoint"] = engineered["age"].map(age_midpoint)
+
+    medication_columns = [
+        column for column in MEDICATION_COLUMNS if column in engineered.columns
+    ]
+    if medication_columns:
+        medication_status = engineered[medication_columns].fillna("No")
+        engineered["active_medication_count"] = medication_status.ne("No").sum(
+            axis=1
+        )
+        engineered["medication_change_count"] = medication_status.isin(
+            ["Up", "Down"]
+        ).sum(axis=1)
+        engineered["medication_up_count"] = medication_status.eq("Up").sum(axis=1)
+        engineered["medication_down_count"] = medication_status.eq("Down").sum(
+            axis=1
+        )
+
+    utilization_columns = [
+        column
+        for column in ("number_outpatient", "number_emergency", "number_inpatient")
+        if column in engineered.columns
+    ]
+    if utilization_columns:
+        utilization = engineered[utilization_columns].apply(
+            pd.to_numeric, errors="coerce"
+        ).fillna(0.0)
+        engineered["total_prior_utilization"] = utilization.sum(axis=1)
+        acute_columns = [
+            column
+            for column in ("number_emergency", "number_inpatient")
+            if column in utilization.columns
+        ]
+        engineered["acute_prior_utilization"] = utilization[acute_columns].sum(
+            axis=1
+        )
+        if "number_inpatient" in utilization.columns:
+            engineered["has_inpatient_history"] = (
+                utilization["number_inpatient"] > 0
+            ).astype("int8")
+
+    if "time_in_hospital" in engineered.columns:
+        stay = pd.to_numeric(
+            engineered["time_in_hospital"], errors="coerce"
+        ).clip(lower=1)
+        for source, destination in (
+            ("num_lab_procedures", "labs_per_hospital_day"),
+            ("num_procedures", "procedures_per_hospital_day"),
+            ("num_medications", "medications_per_hospital_day"),
+        ):
+            if source in engineered.columns:
+                engineered[destination] = pd.to_numeric(
+                    engineered[source], errors="coerce"
+                ) / stay
+
+    intensity_columns = [
+        column
+        for column in ("num_lab_procedures", "num_procedures", "num_medications")
+        if column in engineered.columns
+    ]
+    if intensity_columns:
+        engineered["care_intensity"] = engineered[intensity_columns].apply(
+            pd.to_numeric, errors="coerce"
+        ).fillna(0.0).sum(axis=1)
+
+    if {"patient_nbr", "encounter_id"}.issubset(engineered.columns):
+        ordered = engineered.sort_values(
+            ["patient_nbr", "encounter_id"], kind="mergesort"
+        ).copy()
+        patient_groups = ordered.groupby("patient_nbr", sort=False)
+        prior_count = patient_groups.cumcount().astype("int64")
+        ordered["prior_encounter_count"] = prior_count
+        ordered["is_repeat_encounter"] = (prior_count > 0).astype("int8")
+
+        for column in (
+            "time_in_hospital",
+            "num_lab_procedures",
+            "num_procedures",
+            "num_medications",
+            "number_diagnoses",
+        ):
+            if column not in ordered.columns:
+                continue
+            values = pd.to_numeric(ordered[column], errors="coerce").fillna(0.0)
+            cumulative_prior = values.groupby(ordered["patient_nbr"]).cumsum() - values
+            ordered[f"prior_mean_{column}"] = cumulative_prior.div(
+                prior_count.replace(0, np.nan)
+            )
+
+        if "diag_1_family" in ordered.columns:
+            ordered["previous_primary_diagnosis_family"] = patient_groups[
+                "diag_1_family"
+            ].shift(1).fillna("No_previous_encounter")
+        if "discharge_disposition_id" in ordered.columns:
+            ordered["previous_discharge_disposition_id"] = patient_groups[
+                "discharge_disposition_id"
+            ].shift(1).astype("Int64").astype("string").fillna(
+                "No_previous_encounter"
+            )
+
+        engineered = ordered.sort_index()
+
+    return engineered
 
 
 def clean_diabetes_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
@@ -184,20 +378,23 @@ def make_patient_order_split(
     return splits, audit
 
 
-def make_features(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    if TARGET not in frame.columns:
-        raise ValueError(f"expected {TARGET} after cleaning")
-    y = frame[TARGET].astype("int64")
-    X = frame.drop(columns=[TARGET, *ID_COLUMNS], errors="ignore").copy()
+def prepare_model_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Apply deterministic feature engineering to training or inference rows."""
+    engineered = engineer_clinical_features(frame)
+    X = engineered.drop(columns=[TARGET, *ID_COLUMNS], errors="ignore").copy()
     X = X.drop(columns=list(HIGH_MISSING_COLUMNS), errors="ignore")
 
     for column in NOMINAL_ID_COLUMNS:
         if column in X.columns:
             X[column] = X[column].astype("Int64").astype("string")
-    for column in DIAGNOSIS_COLUMNS:
-        if column in X.columns:
-            X[column] = X[column].map(diagnosis_family).astype("string")
-    return X, y
+    return X
+
+
+def make_features(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    if TARGET not in frame.columns:
+        raise ValueError(f"expected {TARGET} after cleaning")
+    y = frame[TARGET].astype("int64")
+    return prepare_model_features(frame), y
 
 
 def feature_types(X: pd.DataFrame) -> tuple[list[str], list[str]]:
@@ -629,6 +826,40 @@ def prepare_catboost_features(
     return prepared
 
 
+def positive_probability_logits(probability: np.ndarray) -> np.ndarray:
+    """Represent binary probabilities as two logits for temperature scaling."""
+    clipped = np.clip(np.asarray(probability, dtype=float), 1e-7, 1 - 1e-7)
+    log_odds = np.log(clipped / (1.0 - clipped))
+    return np.column_stack([np.zeros_like(log_odds), log_odds])
+
+
+def catboost_blend_sweep(
+    y_validation: np.ndarray,
+    primary_probability: np.ndarray,
+    secondary_probability: np.ndarray,
+) -> pd.DataFrame:
+    """Select ensemble weights on validation ranking metrics only."""
+    rows: list[dict[str, float]] = []
+    for primary_weight in np.linspace(0.0, 1.0, 21):
+        blended = (
+            primary_weight * primary_probability
+            + (1.0 - primary_weight) * secondary_probability
+        )
+        rows.append(
+            {
+                "primary_weight": float(primary_weight),
+                "secondary_weight": float(1.0 - primary_weight),
+                "validation_roc_auc": float(roc_auc_score(y_validation, blended)),
+                "validation_pr_auc": float(
+                    average_precision_score(y_validation, blended)
+                ),
+            }
+        )
+    return pd.DataFrame(rows).sort_values(
+        ["validation_roc_auc", "validation_pr_auc"], ascending=False
+    )
+
+
 class FTTransformerBlock(torch.nn.Module):
     def __init__(
         self,
@@ -861,7 +1092,10 @@ class TrainingArtifacts:
     logistic_model: LogisticRegression
     tree_preprocessor: ColumnTransformer
     tree_model: HistGradientBoostingClassifier
-    catboost_model: CatBoostClassifier
+    catboost_primary_model: CatBoostClassifier
+    catboost_secondary_model: CatBoostClassifier
+    catboost_primary_weight: float
+    catboost_temperature: float
     dnn_model: ReadmissionDNN
     dnn_temperature: float
     selected_dropout: float
@@ -870,6 +1104,8 @@ class TrainingArtifacts:
     ft_temperature: float
     selected_attention_dropout: float
     feature_columns: list[str]
+    raw_feature_columns: list[str]
+    categorical_features: list[str]
 
 
 def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
@@ -921,28 +1157,86 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         X_validation, categorical_features
     )
     catboost_test = prepare_catboost_features(X_test, categorical_features)
-    catboost_model = CatBoostClassifier(
-        iterations=1000,
-        depth=7,
+    catboost_primary_model = CatBoostClassifier(
+        iterations=1211,
+        depth=5,
         learning_rate=0.05,
         loss_function="Logloss",
-        eval_metric="Logloss",
-        custom_metric=["PRAUC"],
         l2_leaf_reg=5.0,
-        random_strength=1.0,
+        random_strength=0.5,
         random_seed=SEED,
         allow_writing_files=False,
         verbose=False,
+        thread_count=8,
+        bootstrap_type="Bayesian",
+        bagging_temperature=1.0,
     )
-    catboost_model.fit(
+    catboost_primary_model.fit(
         catboost_train,
         y_train,
         cat_features=categorical_features,
-        eval_set=(catboost_validation, y_validation),
-        use_best_model=True,
-        early_stopping_rounds=75,
         verbose=False,
     )
+    catboost_secondary_model = CatBoostClassifier(
+        iterations=838,
+        depth=8,
+        learning_rate=0.05,
+        loss_function="Logloss",
+        l2_leaf_reg=10.0,
+        random_strength=0.5,
+        random_seed=SEED,
+        allow_writing_files=False,
+        verbose=False,
+        thread_count=8,
+        bootstrap_type="Bayesian",
+        bagging_temperature=1.0,
+    )
+    catboost_secondary_model.fit(
+        catboost_train,
+        y_train,
+        cat_features=categorical_features,
+        verbose=False,
+    )
+
+    catboost_primary_probabilities = {
+        "train": catboost_primary_model.predict_proba(catboost_train)[:, 1],
+        "validation": catboost_primary_model.predict_proba(catboost_validation)[:, 1],
+        "test": catboost_primary_model.predict_proba(catboost_test)[:, 1],
+    }
+    catboost_secondary_probabilities = {
+        "train": catboost_secondary_model.predict_proba(catboost_train)[:, 1],
+        "validation": catboost_secondary_model.predict_proba(
+            catboost_validation
+        )[:, 1],
+        "test": catboost_secondary_model.predict_proba(catboost_test)[:, 1],
+    }
+    catboost_weight_sweep = catboost_blend_sweep(
+        y_validation,
+        catboost_primary_probabilities["validation"],
+        catboost_secondary_probabilities["validation"],
+    )
+    catboost_primary_weight = float(
+        catboost_weight_sweep.iloc[0]["primary_weight"]
+    )
+    catboost_blended_probabilities = {
+        split_name: (
+            catboost_primary_weight * catboost_primary_probabilities[split_name]
+            + (1.0 - catboost_primary_weight)
+            * catboost_secondary_probabilities[split_name]
+        )
+        for split_name in ("train", "validation", "test")
+    }
+    catboost_logits = {
+        split_name: positive_probability_logits(probability)
+        for split_name, probability in catboost_blended_probabilities.items()
+    }
+    catboost_temperature = tune_temperature(
+        catboost_logits["validation"], y_validation
+    )
+    catboost_scaled_probabilities = {
+        split_name: softmax_probabilities(logits, catboost_temperature)[:, 1]
+        for split_name, logits in catboost_logits.items()
+    }
 
     dropout_rows: list[dict[str, float]] = []
     histories: list[pd.DataFrame] = []
@@ -1024,11 +1318,11 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
             "validation": tree_model.predict_proba(tree_validation)[:, 1],
             "test": tree_model.predict_proba(tree_test)[:, 1],
         },
-        "CatBoost": {
-            "train": catboost_model.predict_proba(catboost_train)[:, 1],
-            "validation": catboost_model.predict_proba(catboost_validation)[:, 1],
-            "test": catboost_model.predict_proba(catboost_test)[:, 1],
-        },
+        "CatBoost tuned primary": catboost_primary_probabilities,
+        "CatBoost tuned ensemble raw": catboost_blended_probabilities,
+        "CatBoost tuned ensemble temperature-scaled": (
+            catboost_scaled_probabilities
+        ),
         "DNN raw": {
             "train": softmax_probabilities(dnn_train_logits)[:, 1],
             "validation": softmax_probabilities(dnn_validation_logits)[:, 1],
@@ -1156,6 +1450,11 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         "preprocessor_fit_scope": "train only",
         "threshold_selection_scope": "validation only",
         "temperature_scaling_scope": "validation logits only",
+        "catboost_hyperparameter_selection_scope": "validation only",
+        "catboost_blend_weight_selection_scope": "validation only",
+        "patient_history_rule": (
+            "shifted/cumulative encounter-ID order; strictly prior rows only"
+        ),
         "test_used_for_training_or_selection": False,
         "dnn_train_validation_gap": {
             "pr_auc": float(dnn_train["pr_auc"] - dnn_validation["pr_auc"]),
@@ -1173,13 +1472,29 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         },
     }
 
+    raw_demo_frame = splits["train"].drop(
+        columns=[TARGET, *ID_COLUMNS, *HIGH_MISSING_COLUMNS], errors="ignore"
+    ).copy()
+    for column in NOMINAL_ID_COLUMNS:
+        if column in raw_demo_frame.columns:
+            raw_demo_frame[column] = (
+                raw_demo_frame[column].astype("Int64").astype("string")
+            )
+    for column in DIAGNOSIS_COLUMNS:
+        if column in raw_demo_frame.columns:
+            raw_demo_frame[column] = (
+                raw_demo_frame[column].astype("string").fillna("Missing")
+            )
+
     demo_defaults: dict[str, object] = {}
     demo_options: dict[str, list[str]] = {}
-    numeric, categorical = feature_types(X_train)
+    numeric, categorical = feature_types(raw_demo_frame)
     for column in numeric:
-        demo_defaults[column] = float(pd.to_numeric(X_train[column]).median())
+        demo_defaults[column] = float(
+            pd.to_numeric(raw_demo_frame[column]).median()
+        )
     for column in categorical:
-        values = X_train[column].dropna().astype(str)
+        values = raw_demo_frame[column].dropna().astype(str)
         demo_defaults[column] = values.mode().iat[0] if len(values) else "Missing"
         if column in {
             "age",
@@ -1196,6 +1511,13 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
     selected_test = model_comparison[
         (
             model_comparison["model"]
+            == "CatBoost tuned ensemble temperature-scaled"
+        )
+        & (model_comparison["split"] == "test")
+    ].iloc[0].to_dict()
+    ft_selected_test = model_comparison[
+        (
+            model_comparison["model"]
             == "FT-Transformer temperature-scaled"
         )
         & (model_comparison["split"] == "test")
@@ -1210,9 +1532,17 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         "dnn_temperature": dnn_temperature,
         "selected_attention_dropout": selected_attention_dropout,
         "ft_temperature": ft_temperature,
-        "ft_test": {
+        "catboost_primary_weight": catboost_primary_weight,
+        "catboost_temperature": catboost_temperature,
+        "best_model": "CatBoost tuned ensemble temperature-scaled",
+        "best_model_test": {
             key: value.item() if hasattr(value, "item") else value
             for key, value in selected_test.items()
+            if key not in {"model", "split"}
+        },
+        "ft_test": {
+            key: value.item() if hasattr(value, "item") else value
+            for key, value in ft_selected_test.items()
             if key not in {"model", "split"}
         },
     }
@@ -1222,7 +1552,10 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         logistic_model=logistic_model,
         tree_preprocessor=tree_preprocessor,
         tree_model=tree_model,
-        catboost_model=catboost_model,
+        catboost_primary_model=catboost_primary_model,
+        catboost_secondary_model=catboost_secondary_model,
+        catboost_primary_weight=catboost_primary_weight,
+        catboost_temperature=catboost_temperature,
         dnn_model=dnn_model,
         dnn_temperature=dnn_temperature,
         selected_dropout=selected_dropout,
@@ -1231,6 +1564,8 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         ft_temperature=ft_temperature,
         selected_attention_dropout=selected_attention_dropout,
         feature_columns=X_train.columns.tolist(),
+        raw_feature_columns=raw_demo_frame.columns.tolist(),
+        categorical_features=categorical_features,
     )
     return {
         "metrics": headline_metrics,
@@ -1242,6 +1577,7 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         "ft_attention_dropout_sweep": ft_attention_dropout_sweep,
         "ft_train_history": ft_train_history,
         "feature_drift": drift,
+        "catboost_blend_sweep": catboost_weight_sweep,
         "leakage_audit": leakage_audit,
         "artifacts": artifacts,
         "demo_defaults": demo_defaults,
@@ -1276,14 +1612,15 @@ def write_outputs(
         ),
         ("ft_train_history", "ft_train_history.csv"),
         ("feature_drift", "feature_drift.csv"),
+        ("catboost_blend_sweep", "catboost_blend_sweep.csv"),
     ):
         result[key].to_csv(output_dir / filename, index=False)
 
     calibrated_probabilities = result["probability_sets"][
-        "FT-Transformer temperature-scaled"
+        "CatBoost tuned ensemble temperature-scaled"
     ]["test"]
     calibrated_threshold = result["thresholds"][
-        "FT-Transformer temperature-scaled"
+        "CatBoost tuned ensemble temperature-scaled"
     ]
     threshold_table(
         result["targets"]["test"],
@@ -1296,7 +1633,42 @@ def write_outputs(
     joblib.dump(artifacts.logistic_model, artifact_dir / "logistic_model.joblib")
     joblib.dump(artifacts.tree_preprocessor, artifact_dir / "tree_preprocessor.joblib")
     joblib.dump(artifacts.tree_model, artifact_dir / "tree_model.joblib")
-    artifacts.catboost_model.save_model(artifact_dir / "catboost_model.cbm")
+    artifacts.catboost_primary_model.save_model(
+        artifact_dir / "catboost_model.cbm"
+    )
+    artifacts.catboost_secondary_model.save_model(
+        artifact_dir / "catboost_secondary_model.cbm"
+    )
+    catboost_config = {
+        "primary_weight": artifacts.catboost_primary_weight,
+        "secondary_weight": 1.0 - artifacts.catboost_primary_weight,
+        "temperature": artifacts.catboost_temperature,
+        "threshold": calibrated_threshold,
+        "feature_columns": artifacts.feature_columns,
+        "raw_feature_columns": artifacts.raw_feature_columns,
+        "categorical_features": artifacts.categorical_features,
+        "primary_hyperparameters": {
+            "iterations": 1211,
+            "depth": 5,
+            "learning_rate": 0.05,
+            "l2_leaf_reg": 5.0,
+            "random_strength": 0.5,
+        },
+        "secondary_hyperparameters": {
+            "iterations": 838,
+            "depth": 8,
+            "learning_rate": 0.05,
+            "l2_leaf_reg": 10.0,
+            "random_strength": 0.5,
+        },
+        "feature_engineering": (
+            "diagnosis detail + age + medication/utilization intensity + "
+            "strictly prior encounter history"
+        ),
+    }
+    (artifact_dir / "catboost_config.json").write_text(
+        json.dumps(catboost_config, indent=2), encoding="utf-8"
+    )
     torch.save(artifacts.dnn_model.state_dict(), artifact_dir / "dnn_state.pt")
     model_config = {
         "input_dim": int(artifacts.dnn_model.network[0].in_features),
@@ -1333,7 +1705,9 @@ def write_outputs(
             0
         ].feedforward_dropout.p,
         "temperature": artifacts.ft_temperature,
-        "threshold": calibrated_threshold,
+        "threshold": result["thresholds"][
+            "FT-Transformer temperature-scaled"
+        ],
         "feature_columns": artifacts.feature_columns,
         "architecture": "feature tokens -> CLS + 3 pre-norm Transformer blocks -> Linear(2)",
         "training_loss": "CrossEntropyLoss on raw logits",

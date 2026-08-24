@@ -34,9 +34,12 @@ removed from model features. Preprocessing is fit on train only, dropout and
 threshold selection use validation only, and test is used once after selection.
 
 Hospice and expired discharge dispositions are excluded because those
-encounters are not eligible for subsequent readmission. Diagnosis codes are
-grouped into broad ICD-9 families; categorical variables are imputed and
-one-hot encoded, while numeric variables are median-imputed and standardized.
+encounters are not eligible for subsequent readmission. Engineered features
+include expanded ICD-9 families and three-digit codes, age midpoint,
+medication-change counts, utilization and care-intensity ratios, and shifted
+patient history. Patient-history fields use only strictly earlier encounters
+under the encounter-ID ordering proxy; future rows and future labels are never
+used.
 
 ## Models
 
@@ -52,9 +55,18 @@ categorical encoding.
 
 ### CatBoost
 
-CatBoost receives train-fitted missing-value handling while retaining native
-categorical columns. Validation log loss controls early stopping; PR-AUC is
-reported by the common evaluator rather than used as CatBoost's stopping rule.
+CatBoost retains native categorical columns. Eight completed validation-only
+configurations established a depth-5 and depth-8 shortlist. The final models
+use frozen tree counts, then a validation-only grid selects their convex blend:
+
+```text
+0.45 × depth-5 CatBoost + 0.55 × depth-8 CatBoost
+  -> validation-only temperature scaling
+  -> validation-only F1 threshold
+```
+
+The held-out test set was not used for hyperparameter, blend-weight,
+calibration, or threshold selection.
 
 ### FT-Transformer
 
@@ -116,7 +128,7 @@ run. Machine-readable proof is in `outputs/metrics.json`,
 `outputs/leakage_audit.json`.
 
 <!-- VERIFIED_RESULTS_START -->
-Verified locally on 2026-08-23 with seed 42:
+Verified locally on 2026-08-24 with seed 42:
 
 ```text
 raw encounters:                 101,766
@@ -124,38 +136,42 @@ eligible after hospice/death:    99,343
 modeling rows after boundaries:  83,621
 train / validation / test:       63,512 / 9,287 / 10,822
 patient overlap across splits:   0
-encoded DNN input features:       165
-FT feature tokens:                 44 + CLS
-selected DNN dropout:             0.15
-selected FT attention dropout:    0.00
-FT temperature:                   0.7795
+engineered features:                71
+encoded DNN input features:        839
+FT feature tokens:                  71 + CLS
+selected DNN dropout:              0.05
+selected FT attention dropout:     0.05
+CatBoost blend:                    0.45 / 0.55
+CatBoost temperature:              0.8863
 ```
 
 Held-out test results; each threshold was selected on validation data:
 
 | Model | ROC-AUC | PR-AUC | F1 | Recall | Accuracy | Brier | ECE |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Logistic regression | 0.6301 | 0.1443 | 0.1959 | 0.2192 | 0.8422 | 0.0790 | 0.0179 |
-| HistGradientBoosting | **0.6406** | 0.1497 | **0.2112** | **0.3667** | 0.7597 | 0.0787 | 0.0167 |
-| CatBoost | 0.6403 | 0.1514 | 0.2060 | 0.2234 | **0.8490** | 0.0785 | 0.0157 |
-| DNN, temperature-scaled | 0.6365 | **0.1519** | 0.1920 | 0.2719 | 0.7993 | **0.0784** | **0.0121** |
-| FT-Transformer, temperature-scaled | 0.6345 | 0.1481 | 0.2066 | 0.2561 | 0.8276 | 0.0789 | 0.0199 |
+| Logistic regression | 0.6205 | 0.1445 | 0.1953 | 0.3045 | 0.7800 | 0.0793 | 0.0147 |
+| HistGradientBoosting | 0.6268 | 0.1438 | 0.2019 | **0.3772** | 0.7385 | 0.0791 | 0.0145 |
+| CatBoost tuned primary | 0.6603 | 0.1724 | **0.2202** | 0.3678 | 0.7716 | 0.0777 | 0.0161 |
+| CatBoost tuned ensemble, temperature-scaled | **0.6612** | **0.1747** | 0.2187 | 0.3288 | 0.7940 | **0.0773** | **0.0088** |
+| DNN, temperature-scaled | 0.6316 | 0.1481 | 0.1964 | 0.2719 | 0.8049 | 0.0788 | 0.0187 |
+| FT-Transformer, temperature-scaled | 0.6463 | 0.1594 | 0.2033 | 0.2877 | **0.8023** | 0.0780 | 0.0135 |
 
-No single model dominated. Histogram gradient boosting had the best ROC-AUC,
-F1, and recall; CatBoost had the best accuracy; the shallow DNN had the best
-PR-AUC, Brier score, and ECE. FT-Transformer did not beat the simpler models on
-this split despite being substantially more expensive to train.
+The tuned CatBoost ensemble improved the previous best held-out ROC-AUC from
+0.6406 to 0.6612 and the previous best PR-AUC from 0.1519 to 0.1747. The tuned
+primary CatBoost had the highest thresholded F1, while HistGradientBoosting had
+the highest recall at its separately validation-selected threshold. Accuracy is
+not treated as the primary result because the positive test rate is 8.77%.
 
-For FT-Transformer, 0% attention dropout narrowly beat 5% validation PR-AUC:
-0.1529 versus 0.1528. Temperature scaling improved FT validation Brier from
-0.0774 to 0.0745 and ECE from 0.0517 to 0.0181. Test Brier improved from 0.0810
-to 0.0789 and ECE from 0.0432 to 0.0199.
+Feature engineering also improved FT-Transformer test ROC-AUC from 0.6345 to
+0.6463 and PR-AUC from 0.1481 to 0.1594, but FT still did not beat CatBoost and
+was substantially more expensive to train. Five-percent attention dropout won
+the refreshed validation sweep (PR-AUC 0.1597 versus 0.1561 at zero dropout).
 
-From validation to the later encounter-order test cohort, calibrated FT
-ROC-AUC fell by 0.0046, PR-AUC by 0.0048, F1 by 0.0107, and Brier worsened by
-0.0044. `number_diagnoses` showed the strongest numeric shift (PSI 0.2631,
-KS 0.2491). FT train-minus-validation gaps were 0.0701 PR-AUC and 0.0401
-ROC-AUC, so overfitting remains documented rather than hidden.
+From validation to the later encounter-order test cohort, calibrated CatBoost
+ROC-AUC increased by 0.0051 and PR-AUC by 0.0039; F1 fell by 0.0084, recall fell
+by 0.0506, and Brier worsened by 0.0041. The engineered
+`prior_mean_number_diagnoses` had the largest train-to-test shift (PSI 0.5174),
+which is surfaced in the drift view rather than hidden.
 <!-- VERIFIED_RESULTS_END -->
 
 ## Run
@@ -186,6 +202,8 @@ artifacts/
   ft_preprocessor.joblib
   ft_transformer_config.json
   catboost_model.cbm
+  catboost_secondary_model.cbm
+  catboost_config.json
   preprocessor.joblib
   logistic_model.joblib
   tree_model.joblib
@@ -196,6 +214,9 @@ outputs/
   dropout_sweep.csv
   ft_attention_dropout_sweep.csv
   ft_train_history.csv
+  catboost_blend_sweep.csv
+  catboost_hyperparameter_search.csv
+  hgb_hyperparameter_search.csv
   calibration_curve.csv
   feature_drift.csv
   performance_drift.csv
