@@ -23,7 +23,6 @@ ARTIFACTS = ROOT / "artifacts"
 
 st.set_page_config(
     page_title="Clinical Readmission Risk, Calibration & Drift",
-    page_icon="🏥",
     layout="wide",
 )
 st.title("Clinical Readmission Risk, Calibration & Drift")
@@ -576,7 +575,7 @@ with leakage_tab:
         ],
     }
     for label, passed in checks.items():
-        st.write(("✅" if passed else "❌") + f" {label}")
+        st.write(("PASS" if passed else "REVIEW") + f" — {label}")
     st.subheader("DNN train/validation gap")
     st.json(leakage["dnn_train_validation_gap"])
     st.subheader("FT-Transformer train/validation gap")
