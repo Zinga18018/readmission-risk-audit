@@ -10,6 +10,14 @@ autoencoder bottlenecks.
 
 The project is an educational model audit, not a clinical product.
 
+## Live demo
+
+[Open the verified Streamlit demo](https://yogesh-readmission-risk-audit.streamlit.app/)
+
+The public app includes the model comparison, missingness and feature audits,
+calibration and drift views, leakage checks, and an interactive tuned-ensemble
+example. It is educational and must not be used for clinical decisions.
+
 ## Dataset and target
 
 - Source: [UCI Diabetes 130-US Hospitals for Years 1999-2008](https://archive.ics.uci.edu/dataset/296/diabetes-130-us-hospitals-for-years-1999-2008)
