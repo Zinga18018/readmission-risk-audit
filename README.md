@@ -1,14 +1,16 @@
 # Clinical Readmission Risk Modeling, Calibration & Drift
 
-This project predicts **binary readmission within 30 days** for diabetes-related
-hospital encounters. One shared experiment runner compares logistic regression,
-histogram gradient boosting, CatBoost, a shallow DNN, and FT-Transformer using
-the same leakage-safe split and evaluation protocol. A second improvement lab
-audits missingness, categorical association, encounter-order autocorrelation,
-patient-grouped CatBoost tuning, a denser zero-dropout FT-Transformer, and
-autoencoder bottlenecks.
+## What this product is
 
-The project is an educational model audit, not a clinical product.
+This Streamlit dashboard helps you understand a model that estimates whether a
+diabetes-related hospital encounter may lead to readmission within 30 days. It
+shows what the model predicts, how well it performs, whether the data changed,
+and how the project checks for data leakage.
+
+Use the tabs to compare models, inspect missing data and drift, review the
+evaluation process, or enter one example encounter to see the saved model's
+estimated probability. This is an educational model audit, not a clinical
+decision system.
 
 ## Live demo
 
@@ -17,6 +19,22 @@ The project is an educational model audit, not a clinical product.
 The public app includes the model comparison, missingness and feature audits,
 calibration and drift views, leakage checks, and an interactive tuned-ensemble
 example. It is educational and must not be used for clinical decisions.
+
+## Demo screenshots
+
+### Model overview
+
+The overview summarizes the dataset, selected model, and held-out evaluation
+metrics in one place.
+
+![Readmission audit overview](docs/images/readmission-overview.png)
+
+### Try one example encounter
+
+The interactive tab lets you change encounter details and see the saved model's
+estimated readmission probability and validation-selected audit flag.
+
+![Single-encounter prediction demo](docs/images/readmission-prediction-demo.png)
 
 ## Dataset and target
 
