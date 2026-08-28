@@ -12,7 +12,80 @@ evaluation process, or enter one example encounter to see the saved model's
 estimated probability. This is an educational model audit, not a clinical
 decision system.
 
-## Live demo
+## Project story
+
+### What is the project about?
+
+Hospitals want to identify encounters that may be followed by a readmission
+within 30 days. This project builds and audits a probability model for that
+question using a public diabetes hospital dataset. The goal is not only to get
+a prediction, but also to check whether the probability is trustworthy, whether
+the evaluation leaked information, and whether the data changed over time.
+
+### What was the thought process?
+
+The project followed the order in which a real model should be developed:
+
+1. define an eligible encounter and a clear 30-day target;
+2. separate patients across train, validation, and test cohorts;
+3. fit preprocessing and models using training data only;
+4. compare simple, tree-based, and neural models on validation data;
+5. calibrate probabilities and choose the alert threshold on validation data;
+6. open the held-out test cohort once for the final evaluation;
+7. surface calibration, drift, and leakage evidence in a dashboard.
+
+### Why use this approach?
+
+A random row split could place visits from the same patient in both training
+and testing. That would make the result look stronger than it really is. A high
+accuracy number would also be misleading because only 8.77% of the test cohort
+has the positive outcome. Patient-disjoint cohorts, probability calibration,
+PR-AUC, and Brier score make the evaluation more honest for this imbalanced
+problem.
+
+### How does it work?
+
+```text
+Public hospital encounters
+  -> remove ineligible outcomes
+  -> create patient-disjoint encounter-order cohorts
+  -> fit train-only preprocessing
+  -> compare models on validation
+  -> calibrate probability and freeze threshold
+  -> evaluate once on the held-out test cohort
+  -> show performance, drift, and leakage checks in Streamlit
+```
+
+The selected demo model is a calibrated blend of two CatBoost models. CatBoost
+performed better than the linear, histogram-boosting, DNN, and FT-Transformer
+alternatives on the validation and held-out evaluation used by this project.
+
+### How to explain the result in 60 seconds
+
+I built this project to estimate 30-day readmission risk while keeping the
+evaluation realistic. I did not randomly mix visits from the same patient
+across splits. I used training data to fit the pipeline, validation data to
+choose and calibrate the model, and a separate test cohort for the final result.
+CatBoost gave the strongest overall ranking and probability quality, so I kept
+it as the demo model. The Streamlit app then makes the model easier to inspect by
+showing performance, calibration, drift, leakage checks, and one-example
+predictions. It is an educational audit, not a clinical decision tool.
+
+## What the resume metrics mean
+
+- **10,822 test rows** means 10,822 eligible hospital encounters in the final
+  held-out test cohort. It is not a `train_test_split(test_size=...)` result.
+  The cohort is the later encounter-order region after patients crossing split
+  boundaries were removed, leaving zero patient overlap.
+- **Brier score 0.077** is the average squared difference between each predicted
+  probability and the actual binary outcome. Lower is better and zero is
+  perfect. It is not an accuracy or error percentage.
+- With an 8.77% positive rate, a constant base-rate prediction would have a
+  Brier score of about 0.080. The model's 0.077 is a modest improvement in
+  probability quality, so it should be read together with ROC-AUC, PR-AUC, and
+  calibration rather than treated as a standalone win.
+
+## Demo
 
 [Open the verified Streamlit demo](https://yogesh-readmission-risk-audit.streamlit.app/)
 
