@@ -1,5 +1,7 @@
 # Clinical Readmission Risk Modeling, Calibration & Drift
 
+[See the workflow flowchart and code walkthrough](WORKFLOW.md)
+
 ## What this product is
 
 This Streamlit dashboard helps you understand a model that estimates whether a
