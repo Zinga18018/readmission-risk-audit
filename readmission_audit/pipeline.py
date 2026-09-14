@@ -1576,7 +1576,8 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         "patient_history_rule": (
             "shifted/cumulative encounter-ID order; strictly prior rows only"
         ),
-        "test_used_for_training_or_selection": False,
+        "test_used_for_training_or_parameter_selection_in_this_run": False,
+        "historical_test_status": "retrospective exploratory reuse; this run cannot attest to an untouched test history",
         "dnn_train_validation_gap": {
             "pr_auc": float(dnn_train["pr_auc"] - dnn_validation["pr_auc"]),
             "roc_auc": float(dnn_train["roc_auc"] - dnn_validation["roc_auc"]),
@@ -1707,11 +1708,16 @@ def train_and_evaluate(df: pd.DataFrame) -> dict[str, object]:
         "probability_sets": probability_sets,
         "targets": targets,
         "thresholds": thresholds,
+        "prediction_identifiers": {
+            name: frame.loc[:, list(ID_COLUMNS)].reset_index(drop=True)
+            for name, frame in splits.items()
+        },
     }
 
 
 def write_outputs(
-    result: dict[str, object], output_dir: Path, artifact_dir: Path
+    result: dict[str, object], output_dir: Path, artifact_dir: Path,
+    *, export_private_prediction_rows: bool = False,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -1745,6 +1751,22 @@ def write_outputs(
     calibrated_threshold = result["thresholds"][
         "CatBoost tuned ensemble temperature-scaled"
     ]
+    if export_private_prediction_rows:
+        from readmission_audit.evaluation import export_private_predictions
+
+        # Patient-linked rows remain in the ignored private data directory.
+        private_dir = output_dir.parent / "data" / "private"
+        export_metadata = export_private_predictions(
+            result["prediction_identifiers"]["test"],
+            result["targets"]["test"], calibrated_probabilities,
+            private_dir / "historical_test_predictions.csv",
+        )
+        (private_dir / "historical_test_predictions.metadata.json").write_text(
+            json.dumps({**export_metadata, "threshold": calibrated_threshold,
+                        "cohort_status": "historical_exploratory",
+                        "model": "CatBoost tuned ensemble temperature-scaled"}, indent=2),
+            encoding="utf-8",
+        )
     threshold_table(
         result["targets"]["test"],
         calibrated_probabilities,

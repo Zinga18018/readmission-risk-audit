@@ -1,0 +1,45 @@
+{
+  "protocol_version": "1.0",
+  "status": "draft_for_future_evaluation_not_executed",
+  "historical_evidence": {
+    "status": "retrospective_exploratory_test_reuse",
+    "patient_disjoint": "Recorded in outputs/leakage_audit.json; not re-derived from raw data in this repair",
+    "never_inspected_final_test_claim": false,
+    "reason": "Published feature, ensemble and architecture comparisons inspect the same test partition and inform model-retention narratives.",
+    "metric_source": "outputs/metrics.json",
+    "threshold_source": "artifacts/catboost_config.json",
+    "per_encounter_predictions_available_in_tracked_repository": false,
+    "historical_cluster_confidence_intervals": "unavailable_without_patient_linked_predictions"
+  },
+  "future_evaluation": {
+    "cohort_id": null,
+    "cohort_manifest_sha256": null,
+    "model_artifact_sha256": null,
+    "preprocessing_artifact_sha256": null,
+    "calibration_artifact_sha256": null,
+    "threshold": null,
+    "locked_at_utc": null,
+    "review_status": "pending_human_review",
+    "requires": [
+      "A newly designated patient-disjoint cohort whose outcomes have not informed model development; the reused historical test cannot be relabeled untouched.",
+      "Document eligibility, feature availability at prediction time, label horizon and exclusion counts before evaluation.",
+      "Choose preprocessing, model, calibration, decision threshold and workload objective using development and validation data only.",
+      "Freeze cohort, artifact hashes, threshold and analysis plan before opening new evaluation outcomes.",
+      "Record the first evaluation and any later deviations or exploratory analyses separately."
+    ],
+    "threshold_objective": "Requires stakeholder-defined workload/recall tradeoff on validation data; no clinical cutoff is assumed.",
+    "primary_ranking_metric": "average_precision",
+    "additional_metrics": ["roc_auc", "brier_score", "recall", "precision", "f1", "flagged_rate"],
+    "uncertainty": {
+      "method": "patient_cluster_percentile_bootstrap",
+      "estimand": "encounter_weighted_metrics",
+      "n_resamples": 2000,
+      "seed": 42,
+      "confidence_level": 0.95,
+      "minimum_valid_fraction": 0.8,
+      "missing_policy": "error",
+      "refit_or_threshold_retuning_in_replicates": false,
+      "report_undefined_and_single_class_replicates": true
+    }
+  }
+}

@@ -2,6 +2,8 @@
 
 [See the workflow flowchart and code walkthrough](WORKFLOW.md)
 
+**Evaluation disclosure:** the saved patient-disjoint test cohort has been inspected across multiple published model and feature comparisons. These are **historical retrospective/exploratory results**, not a never-inspected final benchmark. Patient separation and train-only fitting are distinct from keeping test outcomes unseen. [Read the corrected protocol and workload audit](outputs/evaluation_readout.md).
+
 ## What this product is
 
 This Streamlit dashboard helps you understand a model that estimates whether a
@@ -26,14 +28,14 @@ the evaluation leaked information, and whether the data changed over time.
 
 ### What was the thought process?
 
-The project followed the order in which a real model should be developed:
+The training code separates fitting and within-run selection as follows; the later historical comparisons require the disclosure above:
 
 1. define an eligible encounter and a clear 30-day target;
 2. separate patients across train, validation, and test cohorts;
 3. fit preprocessing and models using training data only;
 4. compare simple, tree-based, and neural models on validation data;
 5. calibrate probabilities and choose the alert threshold on validation data;
-6. open the held-out test cohort once for the final evaluation;
+6. report performance on the patient-disjoint test cohort, with repeated historical inspection disclosed;
 7. surface calibration, drift, and leakage evidence in a dashboard.
 
 ### Why use this approach?
@@ -54,7 +56,7 @@ Public hospital encounters
   -> fit train-only preprocessing
   -> compare models on validation
   -> calibrate probability and freeze threshold
-  -> evaluate once on the held-out test cohort
+  -> report historical patient-disjoint test evaluation
   -> show performance, drift, and leakage checks in Streamlit
 ```
 
@@ -67,7 +69,9 @@ alternatives on the validation and held-out evaluation used by this project.
 I built this project to estimate 30-day readmission risk while keeping the
 evaluation realistic. I did not randomly mix visits from the same patient
 across splits. I used training data to fit the pipeline, validation data to
-choose and calibrate the model, and a separate test cohort for the final result.
+choose and calibrate each run, and a separate test cohort for evaluation. I later
+inspected that test cohort across several experiments, so these results are
+retrospective rather than an untouched final validation.
 CatBoost gave the strongest overall ranking and probability quality, so I kept
 it as the demo model. The Streamlit app then makes the model easier to inspect by
 showing performance, calibration, drift, leakage checks, and one-example
@@ -75,8 +79,8 @@ predictions. It is an educational audit, not a clinical decision tool.
 
 ## What the resume metrics mean
 
-- **10,822 test rows** means 10,822 eligible hospital encounters in the final
-  held-out test cohort. It is not a `train_test_split(test_size=...)` result.
+- **10,822 test rows** means 10,822 eligible hospital encounters in the historical
+  patient-disjoint test cohort. It is not a `train_test_split(test_size=...)` result.
   The cohort is the later encounter-order region after patients crossing split
   boundaries were removed, leaving zero patient overlap.
 - **Brier score 0.077** is the average squared difference between each predicted
@@ -123,7 +127,7 @@ estimated readmission probability and validation-selected audit flag.
 The public file does **not** contain a row-level date or year. This project
 therefore does not pretend that it can recover literal annual cohorts.
 
-## Leakage-safe evaluation
+## Patient-disjoint evaluation and historical test reuse
 
 The primary split is patient-disjoint and ordered by `encounter_id`:
 
@@ -135,7 +139,11 @@ The primary split is patient-disjoint and ordered by `encounter_id`:
 This is an **encounter-order deployment proxy**, not a calendar-time split.
 `patient_nbr` and `encounter_id` are used only to construct the split and are
 removed from model features. Preprocessing is fit on train only, dropout and
-threshold selection use validation only, and test is used once after selection.
+threshold selection in the training code use validation only. However, the same
+test partition has been inspected in multiple published comparisons, including
+top-k features and later ensemble/architecture experiments. Some model-retention
+explanations explicitly use those test comparisons. A within-run selection rule
+does not establish that the entire development history was blind to test results.
 
 Hospice and expired discharge dispositions are excluded because those
 encounters are not eligible for subsequent readmission. Engineered features
@@ -169,8 +177,9 @@ use frozen tree counts, then a validation-only grid selects their convex blend:
   -> validation-only F1 threshold
 ```
 
-The held-out test set was not used for hyperparameter, blend-weight,
-calibration, or threshold selection.
+The training functions select hyperparameters, blend weight, calibration and
+threshold using validation inputs. This describes their within-run behavior;
+it does not reverse the later exploratory inspection of test results.
 
 ### FT-Transformer
 
@@ -239,7 +248,8 @@ information. Constants are forced to zero relevance.
 
 The tuned CatBoost primary was compared with the top `15`, `25`, `35`, `50`,
 and all `71` feature groups. Validation selected top 50 by ROC-AUC, after which
-its blend weight, temperature, and threshold were frozen before one test run.
+its blend weight, temperature, and threshold were fixed for that candidate's test
+evaluation. The surrounding project had already inspected this test cohort.
 
 | Feature groups | Validation ROC-AUC | Validation PR-AUC |
 |---:|---:|---:|
@@ -250,10 +260,11 @@ its blend weight, temperature, and threshold were frozen before one test run.
 | 71 | 0.6550 | **0.1705** |
 
 The frozen top-50 model scored test ROC-AUC `0.6576` and PR-AUC `0.1695`,
-below the full production ensemble's `0.6612` and `0.1747`. Therefore the
+below the saved demo ensemble's `0.6612` and `0.1747`. Therefore the
 project keeps all 71 feature groups. This is a negative but useful result:
-univariate top-k filtering discarded weak individual features that contribute
-through interactions.
+univariate top-k filtering did not improve this evaluation. Lost interaction
+signal is a possible explanation, not a verified causal mechanism. The decision
+to retain the full model after inspecting these test scores is exploratory.
 
 ## Missingness and statistical audit
 
@@ -327,8 +338,8 @@ XGBoost was added because a recent study on this same public cohort reported it
 as the strongest of logistic regression, random forest, XGBoost, and DNN
 baselines. TabM was added as a modern parameter-efficient ensemble of MLPs. Six
 XGBoost candidates and one early-stopped TabM-mini candidate were selected on
-the later validation cohort; test remained untouched until their weights were
-frozen.
+the later validation cohort; their weights were fixed before their test scoring.
+The test cohort itself was already known from earlier experiments.
 
 | Model | Validation PR-AUC | Test ROC-AUC | Test PR-AUC | Test F1 | Test Brier |
 |---|---:|---:|---:|---:|---:|
@@ -344,7 +355,7 @@ requires richer predictors—such as real dates, laboratory values, vital signs,
 comorbidity detail, hospital/provider context, and behavioral or social-risk
 variables—not another larger architecture over the same inputs.
 
-## Verified local results
+## Verified historical local results
 
 The checked-in values below are refreshed only after a successful full training
 run. Machine-readable proof is in `outputs/metrics.json`,
@@ -370,7 +381,7 @@ CatBoost blend:                    0.45 / 0.55
 CatBoost temperature:              0.8863
 ```
 
-Held-out test results; each threshold was selected on validation data:
+Historical patient-disjoint test results; each reported threshold was selected on validation data:
 
 | Model | ROC-AUC | PR-AUC | F1 | Recall | Accuracy | Brier | ECE |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -400,6 +411,31 @@ which is surfaced in the drift view rather than hidden.
 <!-- VERIFIED_RESULTS_END -->
 
 ## Run
+
+### Read uncertainty status and workload without training
+
+```powershell
+python -m venv .venv-evaluation
+.\.venv-evaluation\Scripts\python.exe -m pip install -r requirements-evaluation.txt
+.\.venv-evaluation\Scripts\python.exe scripts\evaluation_readout.py
+.\.venv-evaluation\Scripts\python.exe -m unittest discover -s tests -p test_evaluation.py -v
+```
+
+[config/evaluation_protocol.json](config/evaluation_protocol.json) is a future protocol draft, not an executed or approved study. Its cohort, artifact hashes and locked threshold are deliberately unfilled. A newly designated unseen cohort is needed for a confirmatory result; the reused test cannot be relabeled untouched.
+
+**Historical confidence intervals are unavailable:** the tracked repository contains aggregate scores but no encounter-level probabilities linked to patient IDs. ROC-AUC, average precision and patient-cluster uncertainty cannot be reconstructed from confusion counts. The new [utility](readmission_audit/evaluation.py) accepts real prediction rows, resamples entire patients, keeps the threshold fixed, and reports dropped/missing and single-class replicate counts. It does not refit or repair selection bias.
+
+For an existing private prediction export:
+
+```powershell
+.\.venv-evaluation\Scripts\python.exe scripts\evaluation_readout.py --predictions data\private\historical_test_predictions.csv
+```
+
+Required columns are `encounter_id,patient_id,y_true,y_prob`; patient IDs may repeat, encounter IDs must not. Missing values raise by default. `--missing-policy drop` explicitly reports exclusions. The default threshold comes from the saved CatBoost config, not a search over test outcomes. A full future training run can optionally create the ignored private export using `scripts/build_readmission_audit.py --export-private-predictions`; this repair did not run that training or create real patient-linked predictions.
+
+The [historical workload table](outputs/historical_threshold_workload.csv) adds the exact saved threshold `0.122` to the existing sensitivity grid. It flags 1,904/10,822 encounters (175.94 per 1,000), captures 312/949 positives (32.88% recall), and has 1,592 false positives. These are retrospective audit counts, not a recommended clinical workload. Choose any new threshold on validation under a declared workload objective.
+
+### Full model training and app
 
 ```powershell
 $ReadmissionVenv = "$env:USERPROFILE\Documents\Codex\.venvs\readmission-risk"
@@ -487,3 +523,8 @@ The output is not a diagnosis, treatment recommendation, or validated hospital
 workflow. The dataset is historical and sensitive, hospital identifiers and
 timestamps are unavailable, and performance on this public benchmark does not
 establish present-day clinical validity.
+
+## Uncertainty method references
+
+- [scikit-learn average precision](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.average_precision_score.html): the project's `pr_auc` calculation uses average precision, not trapezoidal PR area.
+- [SciPy bootstrap documentation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html): background on resampling and percentile intervals. This repository explicitly samples whole patient clusters rather than applying an independent-row bootstrap.

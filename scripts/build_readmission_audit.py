@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import argparse
 import zipfile
 from pathlib import Path
 from urllib.request import urlretrieve
@@ -48,6 +49,10 @@ def extract_csv(zip_path: Path) -> Path:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Train the audit models; this is an expensive training run.")
+    parser.add_argument("--export-private-predictions", action="store_true",
+                        help="Also export patient-linked test predictions under ignored data/private/.")
+    args = parser.parse_args()
     csv_path = extract_csv(download_dataset())
     print(f"reading {csv_path}", flush=True)
     frame = pd.read_csv(csv_path)
@@ -58,7 +63,8 @@ def main() -> None:
     )
 
     result = train_and_evaluate(frame)
-    write_outputs(result, OUTPUT_DIR, ARTIFACT_DIR)
+    write_outputs(result, OUTPUT_DIR, ARTIFACT_DIR,
+                  export_private_prediction_rows=args.export_private_predictions)
 
     metrics = result["metrics"]
     test = metrics["best_model_test"]

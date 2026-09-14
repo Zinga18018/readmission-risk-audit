@@ -1,8 +1,11 @@
 .venv/
+.venv*/
+.uv-cache/
 __pycache__/
 *.pyc
 .streamlit/secrets.toml
 data/raw/
+data/private/
 data/processed/*.csv
 outputs/*.png
 streamlit.*.log

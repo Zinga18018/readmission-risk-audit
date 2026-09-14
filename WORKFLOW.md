@@ -12,11 +12,16 @@ A["UCI diabetes encounter records"] --> B["Eligibility cleaning and feature engi
     B --> C["Encounter-order split with patient exclusion across partitions"]
     C --> D["Fit preprocessing and candidate models on training data"]
     D --> E["Use validation data for tuning, calibration and threshold selection"]
-    E --> F["Evaluate selected artifacts on test partition"]
+    E --> F["Historical test evaluation; repeated inspection disclosed"]
     F --> G["Discrimination, calibration and confusion metrics"]
     F --> H["Feature and population drift analysis"]
     G --> I["Saved audit outputs and dashboard"]
     H --> I
+    F --> J["Workload and missed-positive sensitivity; no test threshold selection"]
+    J --> I
+    K["Future private patient-linked predictions"] --> L["Frozen-threshold patient-cluster bootstrap"]
+    L --> M["Intervals with missing and undefined replicate accounting"]
+    N["Current aggregate-only evidence"] --> O["Historical cluster intervals unavailable"]
 ```
 
 ## Explain it in an interview
@@ -32,3 +37,6 @@ Encounter ID is an ordering proxy, not a calendar timestamp. Patient exclusion c
 - [Cleaning, splitting, modeling and evaluation](readmission_audit/pipeline.py)
 - [Experiment support](readmission_audit/experiments.py)
 - [Saved metrics](outputs/metrics.json)
+- [Future evaluation protocol draft](config/evaluation_protocol.json)
+- [Cluster-bootstrap and workload utility](readmission_audit/evaluation.py)
+- [Historical workload and uncertainty status](outputs/evaluation_readout.md)

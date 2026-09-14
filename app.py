@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from catboost import CatBoostClassifier
+from readmission_audit.evaluation import threshold_workload_table
 
 from readmission_audit.pipeline import (
     positive_probability_logits,
@@ -29,6 +30,12 @@ st.title("Clinical Readmission Risk, Calibration & Drift")
 st.caption(
     "UCI Diabetes 130-US Hospitals · binary <30-day readmission · "
     "educational audit only, not a clinical decision system"
+)
+st.warning(
+    "Historical retrospective/exploratory evaluation: the patient-disjoint test "
+    "cohort was inspected across multiple model comparisons. It is not an untouched "
+    "final benchmark. Patient-cluster confidence intervals are unavailable without "
+    "encounter-level probabilities linked to patient IDs."
 )
 
 required = [
@@ -142,8 +149,9 @@ with overview_tab:
     st.write(
         "The selected ensemble uses richer diagnosis groups and three-digit codes, "
         "medication and utilization intensity, and strictly prior encounter history. "
-        "Hyperparameters, blend weight, probability temperature, and threshold were "
-        "selected without using the test set."
+        "Within each training run, hyperparameters, blend weight, temperature and "
+        "threshold use validation data. Later published test comparisons make the "
+        "overall project a retrospective exploratory audit."
     )
     st.info(
         "The original tuned CatBoost ensemble remains primary. A new grouped-grid "
@@ -173,7 +181,7 @@ with overview_tab:
         )
 
 with models_tab:
-    st.subheader("Held-out test comparison")
+    st.subheader("Historical patient-disjoint test comparison")
     test_comparison = comparison[comparison["split"] == "test"].copy()
     display_columns = [
         "model",
@@ -210,8 +218,16 @@ with models_tab:
         ),
         width="stretch",
     )
-    st.subheader("Selected ensemble threshold tradeoff on test")
-    st.dataframe(thresholds, width="stretch", hide_index=True)
+    st.subheader("Historical threshold workload sensitivity")
+    st.caption(
+        "This describes encounter-level flags and missed positives, not a clinical "
+        "threshold recommendation. Do not select a replacement threshold by optimizing "
+        "this historical test table; select on validation under a declared objective."
+    )
+    workload = threshold_workload_table(thresholds, metrics["best_model_test"])
+    st.dataframe(workload[["threshold", "flags_per_1000_encounters", "recall", "precision",
+                           "missed_positives_per_1000_encounters", "saved_validation_threshold"]],
+                 width="stretch", hide_index=True)
 
     st.subheader("Train-only feature ranking and validation top-k ablation")
     st.dataframe(top_k_ablation, width="stretch", hide_index=True)
@@ -570,15 +586,17 @@ with leakage_tab:
         "Patient and encounter IDs removed from features": leakage[
             "identifier_features_removed"
         ],
-        "Test excluded from model selection": not leakage[
-            "test_used_for_training_or_selection"
-        ],
     }
     for label, passed in checks.items():
         st.write(("PASS" if passed else "REVIEW") + f" — {label}")
+    st.info(
+        "Patient separation is verified by the saved split audit. The historical "
+        "test-selection flag below describes a training-run record and cannot "
+        "attest that test outcomes were never inspected across the project history."
+    )
     st.subheader("DNN train/validation gap")
     st.json(leakage["dnn_train_validation_gap"])
     st.subheader("FT-Transformer train/validation gap")
     st.json(leakage["ft_transformer_train_validation_gap"])
-    st.subheader("Full audit record")
+    st.subheader("Historical run audit record; not a complete test-access history")
     st.json(leakage)
