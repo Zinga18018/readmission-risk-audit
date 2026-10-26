@@ -1,117 +1,97 @@
-# Clinical Readmission Risk Modeling, Calibration & Drift
+# Readmission Risk Audit
 
-[See the workflow flowchart and code walkthrough](WORKFLOW.md)
+A Streamlit dashboard for auditing 30-day readmission models on the public UCI
+diabetes hospital dataset. Compare model ranking, probability calibration,
+threshold workload, missingness, and distribution shift, then inspect a saved
+CatBoost ensemble on a single example encounter.
 
-**Evaluation disclosure:** the saved patient-disjoint test cohort has been inspected across multiple published model and feature comparisons. These are **historical retrospective/exploratory results**, not a never-inspected final benchmark. Patient separation and train-only fitting are distinct from keeping test outcomes unseen. [Read the corrected protocol and workload audit](outputs/evaluation_readout.md).
+**Evaluation status:** all saved results are historical and retrospective.
+Patients are separated across cohorts, but the test cohort was inspected across
+multiple model and feature comparisons. It is not an untouched final benchmark.
+This is an educational model audit, not a clinical decision system.
 
-## What this product is
+[Dashboard](https://yogesh-readmission-risk-audit.streamlit.app/) ·
+[Evaluation and workload readout](outputs/evaluation_readout.md) ·
+[Code walkthrough](WORKFLOW.md)
 
-This Streamlit dashboard helps you understand a model that estimates whether a
-diabetes-related hospital encounter may lead to readmission within 30 days. It
-shows what the model predicts, how well it performs, whether the data changed,
-and how the project checks for data leakage.
+## Start here
 
-Use the tabs to compare models, inspect missing data and drift, review the
-evaluation process, or enter one example encounter to see the saved model's
-estimated probability. This is an educational model audit, not a clinical
-decision system.
+- **Inspect the result:** [saved model comparison](outputs/model_comparison.csv),
+  [calibration](outputs/calibration_curve.csv), and
+  [cohort audit](outputs/leakage_audit.json).
+- **Run a lightweight audit:** the [evaluation-only setup](#run) reads saved
+  aggregates and runs uncertainty utility tests without downloading data or
+  retraining a model.
+- **Open the app locally:** the saved model files and dashboard outputs are
+  checked in. The full environment is required, but retraining is optional.
 
-## Project story
+## How the audit works
 
-### What is the project about?
+![Readmission audit: cohort construction, train-only fitting, validation selection, historical evaluation, and dashboard. The test cohort has been reused.](docs/images/readmission-workflow.svg)
 
-Hospitals want to identify encounters that may be followed by a readmission
-within 30 days. This project builds and audits a probability model for that
-question using a public diabetes hospital dataset. The goal is not only to get
-a prediction, but also to check whether the probability is trustworthy, whether
-the evaluation leaked information, and whether the data changed over time.
+<details>
+<summary>Editable workflow and code references</summary>
 
-### What was the thought process?
-
-The training code separates fitting and within-run selection as follows; the later historical comparisons require the disclosure above:
-
-1. define an eligible encounter and a clear 30-day target;
-2. separate patients across train, validation, and test cohorts;
-3. fit preprocessing and models using training data only;
-4. compare simple, tree-based, and neural models on validation data;
-5. calibrate probabilities and choose the alert threshold on validation data;
-6. report performance on the patient-disjoint test cohort, with repeated historical inspection disclosed;
-7. surface calibration, drift, and leakage evidence in a dashboard.
-
-### Why use this approach?
-
-A random row split could place visits from the same patient in both training
-and testing. That would make the result look stronger than it really is. A high
-accuracy number would also be misleading because only 8.77% of the test cohort
-has the positive outcome. Patient-disjoint cohorts, probability calibration,
-PR-AUC, and Brier score make the evaluation more honest for this imbalanced
-problem.
-
-### How does it work?
-
-```text
-Public hospital encounters
-  -> remove ineligible outcomes
-  -> create patient-disjoint encounter-order cohorts
-  -> fit train-only preprocessing
-  -> compare models on validation
-  -> calibrate probability and freeze threshold
-  -> report historical patient-disjoint test evaluation
-  -> show performance, drift, and leakage checks in Streamlit
+```mermaid
+flowchart TD
+    A["Public UCI hospital encounters"] --> B["Eligibility cleaning"]
+    B --> C["Encounter-ID order proxy; exclude patients crossing boundaries"]
+    C --> D["Training: feature engineering and train-fitted preprocessing/models"]
+    D --> E["Validation: tune blend, calibrate probabilities, freeze threshold"]
+    E --> F["Historical test: ranking, calibration, drift, workload"]
+    F --> G["Saved aggregate outputs and Streamlit dashboard"]
+    F -.-> H["Repeated test inspection disclosed; not confirmatory"]
+    I["Current aggregate-only evidence"] --> J["Patient-cluster intervals unavailable"]
+    K["Future private patient-linked predictions"] --> L["Frozen-threshold cluster bootstrap utility"]
 ```
 
-The selected demo model is a calibrated blend of two CatBoost models. CatBoost
-performed better than the linear, histogram-boosting, DNN, and FT-Transformer
-alternatives on the validation and held-out evaluation used by this project.
+The diagram follows `clean_diabetes_data`, `make_patient_order_split`,
+`prepare_model_features`, and `train_and_evaluate` in
+[`readmission_audit/pipeline.py`](readmission_audit/pipeline.py).
+[`app.py`](app.py) loads saved outputs and the two CatBoost models.
+[`readmission_audit/evaluation.py`](readmission_audit/evaluation.py) provides
+workload and patient-cluster uncertainty utilities. The future prediction path
+is not evidence that historical patient-linked predictions are available.
 
-### How to explain the result in 60 seconds
+</details>
 
-I built this project to estimate 30-day readmission risk while keeping the
-evaluation realistic. I did not randomly mix visits from the same patient
-across splits. I used training data to fit the pipeline, validation data to
-choose and calibrate each run, and a separate test cohort for evaluation. I later
-inspected that test cohort across several experiments, so these results are
-retrospective rather than an untouched final validation.
-CatBoost gave the strongest overall ranking and probability quality, so I kept
-it as the demo model. The Streamlit app then makes the model easier to inspect by
-showing performance, calibration, drift, leakage checks, and one-example
-predictions. It is an educational audit, not a clinical decision tool.
+## Decisions that matter
 
-## What the resume metrics mean
+| Decision | Reason and tradeoff |
+| --- | --- |
+| Separate patients across train, validation, and test | Repeated visits must not place the same patient on both sides of an evaluation boundary. Excluding boundary-crossing patients also changes the evaluated population. |
+| Use encounter ID as an ordering proxy | Row-level dates are unavailable. This tests transfer across an ordering boundary, not a calendar-time deployment. |
+| Fit preprocessing on training data; calibrate and select thresholds on validation | Separates fitting and within-run selection. It does not undo later test inspection. |
+| Keep the two-model CatBoost ensemble | The saved ensemble has the strongest historical PR-AUC and Brier score among the main comparison models. Larger experiments did not justify replacing it; this retention decision is exploratory. |
+| Report PR-AUC, calibration, and workload together | With an 8.77% positive test rate, accuracy alone hides missed positives and false-positive burden. |
 
-- **10,822 test rows** means 10,822 eligible hospital encounters in the historical
-  patient-disjoint test cohort. It is not a `train_test_split(test_size=...)` result.
-  The cohort is the later encounter-order region after patients crossing split
-  boundaries were removed, leaving zero patient overlap.
-- **Brier score 0.077** is the average squared difference between each predicted
-  probability and the actual binary outcome. Lower is better and zero is
-  perfect. It is not an accuracy or error percentage.
-- With an 8.77% positive rate, a constant base-rate prediction would have a
-  Brier score of about 0.080. The model's 0.077 is a modest improvement in
-  probability quality, so it should be read together with ROC-AUC, PR-AUC, and
-  calibration rather than treated as a standalone win.
+## Evidence and limits
 
-## Demo
+The saved ensemble's historical test results are **ROC-AUC 0.6612**, **average
+precision 0.1747** (named `pr_auc` in the code), and **Brier score 0.0773** on
+**10,822 encounters**. At the validation-selected threshold of **0.122**, it flags
+1,904 encounters, including 312 positives and 1,592 false positives. These are
+retrospective audit counts, not a recommended clinical workload.
 
-[Open the verified Streamlit demo](https://yogesh-readmission-risk-audit.streamlit.app/)
+A base-rate probability has a Brier score of about 0.080 on this cohort, so the
+probability-quality improvement is modest. Historical patient-cluster confidence
+intervals cannot be recovered from aggregate scores; the repository does not
+include the required encounter-level probabilities linked to patient IDs.
+The [future evaluation protocol](config/evaluation_protocol.json) is an unfilled
+draft, not an executed confirmatory study.
 
-The public app includes the model comparison, missingness and feature audits,
-calibration and drift views, leakage checks, and an interactive tuned-ensemble
-example. It is educational and must not be used for clinical decisions.
+The machine-readable audit's `test_used_for_training_or_selection: false`
+describes the training function's within-run selection path. It must be read
+alongside the documented later test comparisons, not as proof that the entire
+development history was blind to test results.
 
-## Demo screenshots
+## Dashboard views
 
-### Model overview
-
-The overview summarizes the dataset, selected model, and held-out evaluation
-metrics in one place.
+The overview places the cohort, selected model, and historical evaluation in one
+view. The example tab applies the saved ensemble and validation-selected flag to
+an encounter you enter.
 
 ![Readmission audit overview](docs/images/readmission-overview.png)
-
-### Try one example encounter
-
-The interactive tab lets you change encounter details and see the saved model's
-estimated readmission probability and validation-selected audit flag.
 
 ![Single-encounter prediction demo](docs/images/readmission-prediction-demo.png)
 
@@ -185,7 +165,7 @@ it does not reverse the later exploratory inspection of test results.
 
 ```text
 numerical feature projections + categorical embeddings
-  -> [CLS] + 44 feature tokens
+  -> [CLS] + one token per engineered feature
   -> 3 pre-normalized Transformer blocks
   -> 8-head self-attention, ReGLU feed-forward layers
   -> LayerNorm + ReLU + Linear(2 raw logits)
@@ -435,21 +415,34 @@ Required columns are `encounter_id,patient_id,y_true,y_prob`; patient IDs may re
 
 The [historical workload table](outputs/historical_threshold_workload.csv) adds the exact saved threshold `0.122` to the existing sensitivity grid. It flags 1,904/10,822 encounters (175.94 per 1,000), captures 312/949 positives (32.88% recall), and has 1,592 false positives. These are retrospective audit counts, not a recommended clinical workload. Choose any new threshold on validation under a declared workload objective.
 
-### Full model training and app
+### Open the saved dashboard
 
 ```powershell
 $ReadmissionVenv = "$env:USERPROFILE\Documents\Codex\.venvs\readmission-risk"
 python -m venv $ReadmissionVenv
 & "$ReadmissionVenv\Scripts\python.exe" -m pip install -r requirements.txt
-& "$ReadmissionVenv\Scripts\python.exe" scripts\build_readmission_audit.py
-& "$ReadmissionVenv\Scripts\python.exe" -m scripts.run_improvement_experiments
-& "$ReadmissionVenv\Scripts\python.exe" -m scripts.finalize_catboost_improvement
-& "$ReadmissionVenv\Scripts\python.exe" -m scripts.run_xgb_tabm_stack
 & "$ReadmissionVenv\Scripts\python.exe" -m streamlit run app.py
 ```
 
 The short environment path avoids Windows' legacy path-length limit when
 installing PyTorch from this deeply nested project directory.
+
+The environment path is a local choice; change it if needed. Dependency ranges
+are specified in `requirements.txt`, so this is not a fully locked environment.
+The checked-in outputs support dashboard review without a training run.
+
+### Rebuild models and experiment outputs (optional)
+
+The following commands download the public dataset when it is absent and run
+model training. They are substantially heavier than reviewing the saved audit;
+run them only when you intend to regenerate artifacts.
+
+```powershell
+& "$ReadmissionVenv\Scripts\python.exe" scripts\build_readmission_audit.py
+& "$ReadmissionVenv\Scripts\python.exe" -m scripts.run_improvement_experiments
+& "$ReadmissionVenv\Scripts\python.exe" -m scripts.finalize_catboost_improvement
+& "$ReadmissionVenv\Scripts\python.exe" -m scripts.run_xgb_tabm_stack
+```
 
 ## Test
 
