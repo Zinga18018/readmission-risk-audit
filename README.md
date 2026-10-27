@@ -27,8 +27,6 @@ This is an educational model audit, not a clinical decision system.
 
 ## How the audit works
 
-![Readmission audit: cohort construction, train-only fitting, validation selection, historical evaluation, and dashboard. The test cohort has been reused.](docs/images/readmission-workflow.svg)
-
 <details>
 <summary>Editable workflow and code references</summary>
 
@@ -85,15 +83,19 @@ describes the training function's within-run selection path. It must be read
 alongside the documented later test comparisons, not as proof that the entire
 development history was blind to test results.
 
-## Dashboard views
+## Historical threshold workload
 
-The overview places the cohort, selected model, and historical evaluation in one
-view. The example tab applies the saved ensemble and validation-selected flag to
-an encounter you enter.
+![Flagged encounters and missed readmissions per 1,000 encounters across 15 recorded thresholds; the saved threshold is 0.122.](docs/images/historical-workload.svg)
 
-![Readmission audit overview](docs/images/readmission-overview.png)
+This plots the saved [aggregate readout](outputs/evaluation_readout.json), not new
+predictions. The historical test was repeatedly inspected; these results do not
+establish clinical utility. No patient-level records or invented intervals are used.
 
-![Single-encounter prediction demo](docs/images/readmission-prediction-demo.png)
+```sh
+python -m pip install -r requirements-visuals.txt
+python scripts/plot_historical_workload.py
+python scripts/plot_historical_workload.py --check
+```
 
 ## Dataset and target
 

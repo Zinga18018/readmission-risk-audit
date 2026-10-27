@@ -1,0 +1,2 @@
+# Optional plot reproduction only; does not load clinical rows or models.
+matplotlib==3.10.8
